@@ -10,7 +10,7 @@ set(CMAKE_MODULE_PATH
 option(SERIOUSPROTON_WITH_JSON "Use json library." OFF)
 
 if(WIN32)
-    option(ENABLE_CRASH_LOGGER "Enable the Dr. MinGW crash logging facilities" OFF)
+    option(ENABLE_CRASH_LOGGER "Enable the Dr. MinGW crash logging facilities" ON)
     set(DRMINGW_ROOT DRMINGW_ROOT-NOTFOUND CACHE PATH "Path to Dr. MinGW")
 endif()
 
