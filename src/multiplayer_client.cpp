@@ -5,8 +5,8 @@
 
 P<GameClient> game_client;
 
-GameClient::GameClient(int version_number, sf::IpAddress server, int port_nr)
-: version_number(version_number), server(server), port_nr(port_nr), connect_thread(&GameClient::runConnect, this)
+GameClient::GameClient(int version_number, sp::io::network::Address server, int port_nr)
+: version_number(version_number), server(server), port_nr(port_nr)
 {
     assert(!game_server);
     assert(!game_client);
@@ -15,12 +15,13 @@ GameClient::GameClient(int version_number, sf::IpAddress server, int port_nr)
     game_client = this;
     status = ReadyToConnect;
 
-    last_receive_time.restart();
+    no_data_timeout.start(no_data_disconnect_time);
 }
 
 GameClient::~GameClient()
 {
-    connect_thread.wait();
+    if (connect_thread.joinable())
+        connect_thread.join();
 }
 
 P<MultiplayerObject> GameClient::getObjectById(int32_t id)
@@ -35,7 +36,7 @@ void GameClient::update(float /*delta*/)
     if (status == ReadyToConnect)
     {
         status = Connecting;
-        connect_thread.launch();
+        connect_thread = std::move(std::thread(&GameClient::runConnect, this));
     }
     if (status == Disconnected || status == Connecting)
         return;
@@ -51,13 +52,11 @@ void GameClient::update(float /*delta*/)
     for(unsigned int n=0; n<delList.size(); n++)
         objectMap.erase(delList[n]);
 
-    socket.update();
-    sf::Packet reply;
-    sf::Packet packet;
-    sf::TcpSocket::Status socket_status;
-    while((socket_status = socket.receive(packet)) == sf::TcpSocket::Done)
+    sp::io::DataBuffer reply;
+    sp::io::DataBuffer packet;
+    while(socket.receive(packet))
     {
-        last_receive_time.restart();
+        no_data_timeout.start(no_data_disconnect_time);
 
         command_t command;
         packet >> command;
@@ -126,9 +125,10 @@ void GameClient::update(float /*delta*/)
                                 obj->multiplayerObjectId = id;
                                 objectMap[id] = obj;
 
-                                int16_t idx;
-                                while(packet >> idx)
+                                while(packet.available())
                                 {
+                                    int16_t idx;
+                                    packet >> idx;
                                     if (idx >= 0 && idx < int16_t(obj->memberReplicationInfo.size()))
                                         (obj->memberReplicationInfo[idx].receiveFunction)(obj->memberReplicationInfo[idx].ptr, packet);
                                     else
@@ -155,8 +155,9 @@ void GameClient::update(float /*delta*/)
                     if (objectMap.find(id) != objectMap.end() && objectMap[id])
                     {
                         P<MultiplayerObject> obj = objectMap[id];
-                        while(packet >> idx)
+                        while(packet.available())
                         {
+                            packet >> idx;
                             if (idx < int32_t(obj->memberReplicationInfo.size()))
                                 (obj->memberReplicationInfo[idx].receiveFunction)(obj->memberReplicationInfo[idx].ptr, packet);
                         }
@@ -219,17 +220,16 @@ void GameClient::update(float /*delta*/)
         }
     }
 
-    auto timed_out = last_receive_time.getElapsedTime().asSeconds() > no_data_disconnect_time;
-    if (socket_status == sf::TcpSocket::Disconnected || timed_out)
+    if (!socket.isConnected() || no_data_timeout.isExpired())
     {
         if (disconnect_reason == DisconnectReason::None)
-            disconnect_reason = timed_out ? DisconnectReason::TimedOut : DisconnectReason::ClosedByServer;
-        socket.disconnect();
+            disconnect_reason = socket.isConnected() ? DisconnectReason::TimedOut : DisconnectReason::ClosedByServer;
+        socket.close();
         status = Disconnected;
     }
 }
 
-void GameClient::sendPacket(sf::Packet& packet)
+void GameClient::sendPacket(sp::io::DataBuffer& packet)
 {
     socket.send(packet);
 }
@@ -240,7 +240,7 @@ void GameClient::sendPassword(string password)
         return;
 
     disconnect_reason = DisconnectReason::BadCredentials;
-    sf::Packet reply;
+    sp::io::DataBuffer reply;
     reply << CMD_CLIENT_SEND_AUTH << int32_t(version_number) << password;
     socket.send(reply);
     
@@ -249,7 +249,7 @@ void GameClient::sendPassword(string password)
 
 void GameClient::runConnect()
 {
-    if (socket.connect(server, static_cast<uint16_t>(port_nr), sf::seconds(5)) == sf::TcpSocket::Done)
+    if (socket.connect(server, static_cast<uint16_t>(port_nr)))
     {
         LOG(INFO) << "GameClient: Connected, waiting for authentication";
         status = Authenticating;
@@ -258,4 +258,5 @@ void GameClient::runConnect()
         status = Disconnected;
     }
     socket.setBlocking(false);
+    socket.setDelay(false);
 }

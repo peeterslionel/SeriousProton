@@ -54,7 +54,7 @@ void NetworkAudioRecorder::update(float /*delta*/)
             {
                 samples_till_stop = -1;
                 active_key_index = static_cast<int>(idx);
-                start(48000);
+                start(44100);
                 startSending();
             } else if (idx == size_t(active_key_index))
             {
@@ -69,7 +69,7 @@ void NetworkAudioRecorder::update(float /*delta*/)
     {
         if (InputHandler::keyboardIsReleased(keys[active_key_index].key))
         {
-            samples_till_stop = 48000 / 2;
+            samples_till_stop = 44100 / 2;
         }
     }
     if (samples_till_stop == 0)
@@ -84,7 +84,7 @@ void NetworkAudioRecorder::update(float /*delta*/)
 void NetworkAudioRecorder::startSending()
 {
     int error = 0;
-    encoder = opus_encoder_create(48000, 1, OPUS_APPLICATION_VOIP, &error);
+    encoder = opus_encoder_create(44100, 1, OPUS_APPLICATION_VOIP, &error);
     if (!encoder)
     {
         LOG(ERROR) << "Failed to create opus encoder:" << error;
@@ -92,7 +92,7 @@ void NetworkAudioRecorder::startSending()
 
     if (game_client)
     {
-        sf::Packet audio_packet;
+        sp::io::DataBuffer audio_packet;
         audio_packet << CMD_AUDIO_COMM_START << game_client->getClientId() << int32_t(keys[active_key_index].target_identifier);
         game_client->sendPacket(audio_packet);
     }
@@ -105,7 +105,7 @@ void NetworkAudioRecorder::startSending()
 bool NetworkAudioRecorder::sendAudioPacket()
 {
     bool result = false;
-    sample_buffer_mutex.lock();
+    std::lock_guard<std::mutex> guard(sample_buffer_mutex);
     if (sample_buffer.size() >= frame_size)
     {
         unsigned char packet_buffer[4096];
@@ -114,9 +114,9 @@ bool NetworkAudioRecorder::sendAudioPacket()
             packet_size = opus_encode(encoder, sample_buffer.data(), frame_size, packet_buffer, sizeof(packet_buffer));
         if (game_client)
         {
-            sf::Packet audio_packet;
+            sp::io::DataBuffer audio_packet;
             audio_packet << CMD_AUDIO_COMM_DATA << game_client->getClientId();
-            audio_packet.append(packet_buffer, packet_size);
+            audio_packet.appendRaw(packet_buffer, packet_size);
 
             game_client->sendPacket(audio_packet);
         }
@@ -132,7 +132,6 @@ bool NetworkAudioRecorder::sendAudioPacket()
             samples_till_stop = std::max(0, samples_till_stop - frame_size);
         }
     }
-    sample_buffer_mutex.unlock();
     return result;
 }
 
@@ -141,17 +140,20 @@ void NetworkAudioRecorder::finishSending()
     while(sendAudioPacket())
     {
     }
-    sample_buffer_mutex.lock();
-    while(sample_buffer.size() < frame_size)
-        sample_buffer.push_back(0);
-    sample_buffer_mutex.unlock();
+
+    {
+        std::lock_guard<std::mutex> guard(sample_buffer_mutex);
+        while(sample_buffer.size() < frame_size)
+            sample_buffer.push_back(0);
+    }
+    
     sendAudioPacket();
     opus_encoder_destroy(encoder);
     encoder = nullptr;
 
     if (game_client)
     {
-        sf::Packet audio_packet;
+        sp::io::DataBuffer audio_packet;
         audio_packet << CMD_AUDIO_COMM_STOP << game_client->getClientId();
         game_client->sendPacket(audio_packet);
     }

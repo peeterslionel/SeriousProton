@@ -2,10 +2,10 @@
 #define NETWORK_AUDIO_RECORDER_H
 
 #include <SFML/Audio.hpp>
-#include <SFML/Network.hpp>
 #include <SFML/Window.hpp>
 #include <stdint.h>
 #include <list>
+#include <mutex>
 
 #include "Updatable.h"
 
@@ -21,7 +21,7 @@ private:
     };
     std::vector<KeyConfig> keys;
     int active_key_index = -1;
-    sf::Mutex sample_buffer_mutex;
+    std::mutex sample_buffer_mutex;
     std::vector<sf::Int16> sample_buffer;
     OpusEncoder* encoder = nullptr;
     int samples_till_stop = -1;

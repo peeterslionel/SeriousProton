@@ -3,22 +3,25 @@
 
 #include <functional>
 #include "multiplayer_server.h"
+#include <thread>
+#include <mutex>
+
 
 //Class to find all servers that have the correct version number. Creates a big nice list.
 class ServerScanner : public Updatable
 {
     int server_port;
-    std::unique_ptr<sf::UdpSocket> socket;
-    sf::Clock broadcast_clock;
+    std::unique_ptr<sp::io::network::UdpSocket> socket;
+    sp::SystemTimer broadcast_timer;
 
 public:
     struct ServerInfo
     {
-        sf::IpAddress address;
+        sp::io::network::Address address;
         int port;
         string name;
 
-        sf::Clock timeout_clock;
+        sp::SystemTimer timeout;
     };
 private:
     std::vector<struct ServerInfo> server_list;
@@ -27,18 +30,18 @@ private:
     constexpr static float ServerTimeout = 30.0f;
 
     string master_server_url;
-    sf::Mutex server_list_mutex;
-    std::unique_ptr<sf::Thread> master_server_scan_thread;
+    std::mutex server_list_mutex;
+    std::thread master_server_scan_thread;
 
-    std::function<void(sf::IpAddress, string)> newServerCallback;
-    std::function<void(sf::IpAddress)> removedServerCallback;
+    std::function<void(sp::io::network::Address, string)> newServerCallback;
+    std::function<void(sp::io::network::Address)> removedServerCallback;
 public:
 
     ServerScanner(int version_number, int server_port = defaultServerPort);
     virtual ~ServerScanner();
 
     virtual void update(float delta);
-    void addCallbacks(std::function<void(sf::IpAddress, string)> newServerCallback, std::function<void(sf::IpAddress)> removedServerCallback);
+    void addCallbacks(std::function<void(sp::io::network::Address, string)> newServerCallback, std::function<void(sp::io::network::Address)> removedServerCallback);
     
     void scanLocalNetwork();
     void scanMasterServer(string url);
@@ -48,7 +51,7 @@ public:
 private:
     void masterServerScanThread();
     
-    void updateServerEntry(sf::IpAddress address, int port, string name);
+    void updateServerEntry(sp::io::network::Address address, int port, string name);
 };
 
 #endif//MULTIPLAYER_SERVER_SCANER_H

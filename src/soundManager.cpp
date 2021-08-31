@@ -1,6 +1,5 @@
 #include <stdio.h>
 #include <string.h>
-#include <SFML/Network.hpp>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -10,22 +9,12 @@
 #include "soundManager.h"
 #include "random.h"
 
-#define MAX_SOUNDS 16
-
 SoundManager* soundManager;
 
 SoundManager::SoundManager()
 {
-    // By creating a SoundBuffer we force SFML to load the sound subsystem.
-    // Else this is done when the first sound is loaded, causing a delay at that
-    // point.
-    sf::SoundBuffer forceLoadBuffer;
-
-    for(unsigned int n = 0; n < MAX_SOUNDS; n++)
-        activeSoundList.push_back(sf::Sound());
-    
-    master_sound_volume = 100.0;
-    music_volume = 100.0;
+    master_sound_volume = 1.0f;
+    music_volume = 1.0f;
     positional_sound_enabled = false;
     music_channel.mode = None;
 }
@@ -37,16 +26,14 @@ SoundManager::~SoundManager()
 void SoundManager::playMusic(string name)
 {
     music_set.clear();
-    P<ResourceStream> stream = getResourceStream(name);
-    if (stream)
-        startMusic(stream, true);
+    startMusic(name, true);
 }
 
 void SoundManager::playMusicSet(std::vector<string> filenames)
 {
     music_set = filenames;
     if (music_set.size() > 0)
-        startMusic(getResourceStream(music_set[irandom(0, static_cast<int>(music_set.size()) - 1)]), false);
+        startMusic(music_set[irandom(0, static_cast<int>(music_set.size()) - 1)], false);
     else
         stopMusic();
 }
@@ -62,7 +49,7 @@ void SoundManager::setMusicVolume(float volume)
     if (music_volume != volume)
     {
         music_volume = volume;
-        if (music_channel.mode == None && music_channel.music.getStatus() != sf::Music::Stopped)
+        if (music_channel.mode == None && music_channel.music.isPlaying())
             music_channel.music.setVolume(music_volume);
     }
 }
@@ -74,89 +61,67 @@ float SoundManager::getMusicVolume()
 
 void SoundManager::stopSound(int index)
 {
-    if (index < 0 || index >= MAX_SOUNDS)
+    if (index < 0 || index >= int(active_sound_list.size()))
         return;
-    sf::Sound& sound = activeSoundList[index];
-    if (sound.getStatus() == sf::Sound::Playing)
+    auto& sound = active_sound_list[index];
+    if (sound.playback.isPlaying())
     {
-        sound.setLoop(false);
-        sound.stop();
+        sound.playback.stop();
     }
 }
 
 void SoundManager::setMasterSoundVolume(float volume)
 {
-    // Set factor by which sound effect playback is multiplied.
-    // Bound volume between 0.0f and 100.0f.
-    master_sound_volume = std::max(0.0f, std::min(100.0f, volume));
+    if (volume != master_sound_volume * 100.0f)
+    {
+        master_sound_volume = std::clamp(volume / 100.0f, 0.0f, 1.0f);
+    }
 }
 
 float SoundManager::getMasterSoundVolume()
 {
-    return master_sound_volume;
+    return master_sound_volume * 100.0f;
 }
 
 void SoundManager::setSoundVolume(int index, float volume)
 {
-    sf::Sound& sound = activeSoundList[index];
-    if (sound.getStatus() == sf::Sound::Playing)
+    auto& sound = active_sound_list[index];
+    if (sound.playback.isPlaying())
     {
-        // Bound volume between 0.0f and 100.0f.
-        volume = std::max(0.0f, std::min(100.0f, volume));
-        sound.setVolume(volume);
-    }
-}
-
-float SoundManager::getSoundVolume(int index)
-{
-    sf::Sound& sound = activeSoundList[index];
-    if (sound.getStatus() == sf::Sound::Playing)
-    {
-        return sound.getVolume();
-    } else {
-        return 0.0f;
+        sound.volume = std::clamp(volume / 100.0f, 0.0f, 1.0f);
+        updateChannelVolume(sound);
     }
 }
 
 void SoundManager::setSoundPitch(int index, float pitch)
 {
-    sf::Sound& sound = activeSoundList[index];
-    if (sound.getStatus() == sf::Sound::Playing)
+    if (index < 0 || index >= int(active_sound_list.size()))
+        return;
+    auto& sound = active_sound_list[index];
+    if (sound.playback.isPlaying())
     {
         // Bound pitch to 0.0f or greater.
         pitch = std::max(0.0f, pitch);
-        sound.setPitch(pitch);
-    }
-}
-
-float SoundManager::getSoundPitch(int index)
-{
-    sf::Sound& sound = activeSoundList[index];
-    if (sound.getStatus() == sf::Sound::Playing)
-    {
-        return sound.getPitch();
-    } else {
-        return 0.0f;
+        sound.playback.setPitch(pitch);
     }
 }
 
 int SoundManager::playSound(string name, float pitch, float volume, bool loop)
 {
-    sf::SoundBuffer* data = soundMap[name];
-    if (data == NULL)
+    auto data = sound_map[name];
+    if (data == nullptr)
         data = loadSound(name);
 
     // Return the sound's index in activeSoundList[].
     // Returns -1 if the list was full of playing sounds.
-    return playSoundData(data, pitch, volume * (master_sound_volume / 100.f), loop);
+    return playSoundData(data, pitch, volume, loop);
 }
 
-void SoundManager::setListenerPosition(sf::Vector2f position, float angle)
+void SoundManager::setListenerPosition(glm::vec2 position, float angle)
 {
-    sf::Vector2f listen_vector = sf::vector2FromAngle(angle);
-    sf::Listener::setPosition(position.x, 0, position.y);
-    sf::Listener::setDirection(listen_vector.x, 0, listen_vector.y);
+    //auto listen_vector = vec2FromAngle(angle);
     positional_sound_enabled = true;
+    listener_position = glm::vec3(position.x, position.y, 0);
 }
 
 void SoundManager::disablePositionalSound()
@@ -164,30 +129,29 @@ void SoundManager::disablePositionalSound()
     positional_sound_enabled = false;
 }
 
-int SoundManager::playSound(string name, sf::Vector2f position, float min_distance, float attenuation, float pitch, float volume, bool loop)
+int SoundManager::playSound(string name, glm::vec2 position, float min_distance, float attenuation, float pitch, float volume, bool loop)
 {
     if (!positional_sound_enabled)
         return -1;
-    sf::SoundBuffer* data = soundMap[name];
-    if (data == NULL)
+    auto* data = sound_map[name];
+    if (data == nullptr)
         data = loadSound(name);
     if (data->getChannelCount() > 1)
         LOG(WARNING) << name << ": Used as positional sound but has more than 1 channel.";
 
-    for(unsigned int n = 0; n < activeSoundList.size(); n++)
+    for(unsigned int n = 0; n < active_sound_list.size(); n++)
     {
-        sf::Sound& sound = activeSoundList[n];
-        if (sound.getStatus() == sf::Sound::Stopped)
+        auto& sound = active_sound_list[n];
+        if (!sound.playback.isPlaying())
         {
-            sound.setBuffer(*data);
-            sound.setRelativeToListener(false);
-            sound.setMinDistance(min_distance);
-            sound.setAttenuation(attenuation);
-            sound.setPosition(position.x, 0, position.y);
-            sound.setPitch(pitch);
-            sound.setVolume(volume * (master_sound_volume / 100.f));
-            sound.setLoop(loop);
-            sound.play();
+            sound.positional = true;
+            sound.position = position;
+            sound.min_distance = min_distance;
+            sound.attenuation = attenuation;
+            sound.volume = std::clamp(volume / 100.0f, 0.0f, 1.0f);
+            sound.playback.setPitch(pitch);
+            updateChannelVolume(sound);
+            sound.playback.play(*data, loop);
             return int(n);
         }
     }
@@ -196,76 +160,18 @@ int SoundManager::playSound(string name, sf::Vector2f position, float min_distan
     return -1;
 }
 
-void SoundManager::setTextToSpeachVoice(string name)
+int SoundManager::playSoundData(sp::audio::Sound* data, float pitch, float volume, bool loop)
 {
-}
-
-string url_encode(const string &value) {
-    std::ostringstream escaped;
-    escaped.fill('0');
-    escaped << std::hex;
-
-    for (string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
-        string::value_type c = (*i);
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            escaped << c;
-        }
-        else if (c == ' ') {
-            escaped << '+';
-        }
-        else {
-            escaped << '%' << std::setw(2) << ((int) c) << std::setw(0);
-        }
-    }
-
-    return escaped.str();
-}
-
-void SoundManager::playTextToSpeech(string text)
-{
-    string name = "TTS:" + text;
-    sf::SoundBuffer* data = soundMap[name];
-    if (data != NULL)
+    for(unsigned int n = 0; n < active_sound_list.size(); n++)
     {
-        playSoundData(data, 1.0, 100.0, false);
-        return;
-    }
-
-    sf::Http http("localhost", 59125);
-    sf::Http::Request request("process?INPUT_TEXT=" + url_encode(text) + "&INPUT_TYPE=TEXT&OUTPUT_TYPE=AUDIO&AUDIO=WAVE_FILE&LOCALE=en_US&VOICE=dfki-prudence");
-    sf::Http::Response response = http.sendRequest(request);
-
-    sf::Http::Response::Status status = response.getStatus();
-    if (status == sf::Http::Response::Ok)
-    {
-        string wave = response.getBody();
-        sf::SoundBuffer* soundbuffer = new sf::SoundBuffer();
-        data->loadFromMemory(wave.data(), wave.size());
-        soundMap[name] = soundbuffer;
-        playSoundData(soundbuffer, 1.f, 100.f, false);
-    }
-    else
-    {
-        std::cout << "Error requesting text to speech from Mary server: " << status << std::endl;
-    }
-}
-
-int SoundManager::playSoundData(sf::SoundBuffer* data, float pitch, float volume, bool loop)
-{
-    for(unsigned int n = 0; n < activeSoundList.size(); n++)
-    {
-        sf::Sound& sound = activeSoundList[n];
-        if (sound.getStatus() == sf::Sound::Stopped)
+        auto& sound = active_sound_list[n];
+        if (!sound.playback.isPlaying())
         {
-            sound.setBuffer(*data);
-            sound.setRelativeToListener(true);
-            sound.setMinDistance(1);
-            sound.setAttenuation(0);
-            sound.setPitch(pitch);
-            sound.setVolume(volume);
-            sound.setPosition(0, 0, 0);
-            sound.setLoop(loop);
-            sound.play();
+            sound.positional = false;
+            sound.volume = std::clamp(volume / 100.0f, 0.0f, 1.0f);
+            updateChannelVolume(sound);
+            sound.playback.setPitch(pitch);
+            sound.playback.play(*data, loop);
             return int(n);
         }
     }
@@ -274,66 +180,86 @@ int SoundManager::playSoundData(sf::SoundBuffer* data, float pitch, float volume
     return -1;
 }
 
-sf::SoundBuffer* SoundManager::loadSound(string name)
+sp::audio::Sound* SoundManager::loadSound(const string& name)
 {
-    sf::SoundBuffer* data = soundMap[name];
+    auto data = sound_map[name];
     if (data)
         return data;
 
-    data = new sf::SoundBuffer();
+    data = new sp::audio::Sound(name);
 
-    P<ResourceStream> stream = getResourceStream(name);
-    if (!stream) stream = getResourceStream(name + ".wav");
-    if (!stream || !data->loadFromStream(**stream))
+    if (data->getChannelCount() == 0)
     {
-        LOG(WARNING) << "Failed to load sound: " << name;
-        soundMap[name] = data;
+        LOG(Warning, "Failed to load sound: ", name);
+        sound_map[name] = data;
         return data;
     }
 
-    LOG(INFO) << "Loaded: " << name << " of " << data->getDuration().asSeconds() << " seconds";
-    soundMap[name] = data;
+    LOG(Info, "Loaded: ", name, " of ", data->getDuration(), " seconds");
+    sound_map[name] = data;
     return data;
 }
 
-void SoundManager::startMusic(P<ResourceStream> stream, bool loop)
+void SoundManager::updateChannelVolume(SoundChannel& channel)
 {
-    if (!stream)
+    if (channel.positional)
+    {
+        auto distance = glm::length(listener_position - channel.position);
+        distance = std::max(channel.min_distance, distance);
+        float gain = channel.min_distance / (channel.min_distance + channel.attenuation * (distance - channel.min_distance));
+        channel.playback.setVolume(channel.volume * master_sound_volume * gain);
+    }
+    else
+    {
+        channel.playback.setVolume(channel.volume * master_sound_volume);
+    }
+}
+
+void SoundManager::startMusic(const string& name, bool loop)
+{
+    if (name.empty())
         return;
     
-    if (music_channel.music.getStatus() == sf::Music::Playing)
+    if (music_channel.music.isPlaying())
     {
-        music_channel.next_stream = stream;
+        music_channel.next_stream = name;
         music_channel.mode = FadeOut;
         music_channel.fade_delay = fade_music_time;
     }else{
         music_channel.mode = FadeIn;
         music_channel.fade_delay = fade_music_time;
 
-        music_channel.music.openFromStream(**stream);
-        music_channel.stream = stream;
-        music_channel.music.setLoop(loop);
         music_channel.music.setVolume(0);
-        music_channel.music.play();
+        music_channel.music.open(name, loop);
     }
 }
 
 void SoundManager::updateTick()
 {
-    float delta = clock.restart().asSeconds();
+    float delta = clock.restart();
     updateChannel(music_channel, delta);
     
     if (music_set.size() > 0)
     {
-        if (music_channel.music.getStatus() == sf::Music::Playing && music_channel.mode == None)
+        if (music_channel.music.isPlaying() && music_channel.mode == None)
         {
-            if (!music_channel.next_stream)
+            if (music_channel.next_stream.empty())
             {
+                /* TODO
                 if (music_channel.music.getPlayingOffset() > music_channel.music.getDuration() - sf::seconds(fade_music_time))
                 {
                     startMusic(getResourceStream(music_set[irandom(0, static_cast<int>(music_set.size()) - 1)]), false);
                 }
+                */
             }
+        }
+    }
+
+    for(auto& channel : active_sound_list)
+    {
+        if (channel.positional && channel.playback.isPlaying() && positional_sound_enabled)
+        {
+            updateChannelVolume(channel);
         }
     }
 }
@@ -362,15 +288,13 @@ void SoundManager::updateChannel(MusicChannel& channel, float delta)
         }else{
             channel.music.stop();
             channel.mode = None;
-            if (channel.next_stream)
+            if (!channel.next_stream.empty())
             {
-                channel.music.openFromStream(**channel.next_stream);
-                channel.stream = channel.next_stream;
-                channel.next_stream = nullptr;
+                channel.music.setVolume(0);
+                channel.music.open(channel.next_stream, false);
+                channel.next_stream.clear();
                 channel.mode = FadeIn;
                 channel.fade_delay = fade_music_time;
-                channel.music.setVolume(0);
-                channel.music.play();
             }
         }
         break;
