@@ -2,47 +2,61 @@ cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(SeriousProton LANGUAGES CXX)
 
 set(CMAKE_MODULE_PATH
-    ${CMAKE_SOURCE_DIR}/cmake/
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/
     ${CMAKE_MODULE_PATH}
 )
+if(POLICY CMP0074)
+    cmake_policy(SET CMP0074 NEW)
+endif()
+if(POLICY CMP0077)
+    cmake_policy(SET CMP0077 NEW)
+endif()
 
 # User-settings
 option(SERIOUSPROTON_WITH_JSON "Use json library." OFF)
 
+#
+set(EXTERNALS_DIR "${PROJECT_BINARY_DIR}/externals")
+set(DOWNLOADS_DIR "${PROJECT_BINARY_DIR}/downloads")
+file(MAKE_DIRECTORY "${EXTERNAL_DIR}" "${DOWNLOADS_DIR}")
+
+# Crash Logger for MinGW
 if(WIN32)
     option(ENABLE_CRASH_LOGGER "Enable the Dr. MinGW crash logging facilities" ON)
     set(DRMINGW_ROOT DRMINGW_ROOT-NOTFOUND CACHE PATH "Path to Dr. MinGW")
-endif()
 
-# Preflight checks.
-message(STATUS "Crash Logger is " ${ENABLE_CRASH_LOGGER})
+    if(NOT ENABLE_CRASH_LOGGER)
+        message(STATUS "Crash Logger is OFF")
+    else()
+        message(STATUS "Crash Logger is ON")
 
-if(ENABLE_CRASH_LOGGER)
-    if(NOT DRMINGW_ROOT)
-        message("Downloading Dr. MinGW")
+        if(NOT DRMINGW_ROOT)
+            message(VERBOSE "Downloading Dr. MinGW")
 
-        set(DRMINGW_ARCH "64")
-        if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
-            set(DRMINGW_ARCH "32")
-        endif()
+            if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+                set(DRMINGW_ARCH "32")
+            else()
+                set(DRMINGW_ARCH "64")
+            endif()
 
-        # 0.9.x seems to give a hard time to people on Win7.
-        # Sticking with 0.8 for that reason.
-        set(DRMINGW_VERSION "0.8.2")
-        set(DRMINGW_BASENAME "drmingw-${DRMINGW_VERSION}-win${DRMINGW_ARCH}")
-        set(DRMINGW_ROOT "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}" CACHE PATH "Path to Dr. MinGW" FORCE)
+            # 0.9.x seems to give a hard time to people on Win7.
+            # Sticking with 0.8 for that reason.
+            set(DRMINGW_VERSION "0.8.2")
+            set(DRMINGW_BASENAME "drmingw-${DRMINGW_VERSION}-win${DRMINGW_ARCH}")
+            set(DRMINGW_ROOT "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}" CACHE PATH "Path to Dr. MinGW" FORCE)
 
-        if(NOT EXISTS "${DRMINGW_ROOT}/bin/exchndl.dll")
-            set(DRMINGW_ZIP "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}.7z")
-            
-            file(DOWNLOAD "https://github.com/jrfonseca/drmingw/releases/download/${DRMINGW_VERSION}/${DRMINGW_BASENAME}.7z" "${DRMINGW_ZIP}" TIMEOUT 60 TLS_VERIFY ON)
-            execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf "${DRMINGW_ZIP}" WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            if(NOT EXISTS "${DRMINGW_ROOT}/bin/exchndl.dll")
+                set(DRMINGW_ZIP "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}.7z")
+
+                file(DOWNLOAD "https://github.com/jrfonseca/drmingw/releases/download/${DRMINGW_VERSION}/${DRMINGW_BASENAME}.7z" "${DRMINGW_ZIP}" TIMEOUT 60 TLS_VERIFY ON)
+                execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf "${DRMINGW_ZIP}" WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+            endif()
         endif()
     endif()
 endif()
 
 #--------------------------------Dependencies----------------------------------
-find_package(SFML 2.5 COMPONENTS system audio network window graphics)
+find_package(SFML 2.5 COMPONENTS system audio window graphics)
 if(NOT ${SFML_FOUND})
     message(STATUS "Couldn't find SFML. Building it from scratch.")
     
@@ -51,7 +65,7 @@ if(NOT ${SFML_FOUND})
     include(ExternalProject)
 
     ExternalProject_Add(SFML
-        GIT_REPOSITORY https://github.com/SFML/SFML.git
+        GIT_REPOSITORY git@github.com:SFML/SFML.git
         GIT_TAG 2.5.1 #Always build with this tag, so we're sure it is stable.
         GIT_SHALLOW 1 # Don't get the entire history
         CMAKE_ARGS
@@ -75,30 +89,88 @@ if(NOT ${SFML_FOUND})
         "-L${SFML_ROOT}/lib"
         "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-audio${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
         "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-graphics${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
-        "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-network${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
         "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-system${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
         "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-window${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
     )
 endif()
 
-add_subdirectory(src/Box2D)
-add_subdirectory(src/lua)
-add_subdirectory(src/GL)
-add_subdirectory(src/libopus)
 
-if(SERIOUSPROTON_WITH_JSON)
-    add_subdirectory(src/json11)
+# GLM - OpenGL Mathematic library
+SET(WITH_GLM "auto" CACHE STRING "Which GLM to use (possible values are 'bundled', 'system' or 'auto')")
+
+if(WITH_GLM STREQUAL "system" OR WITH_GLM STREQUAL "auto")
+    find_package(glm QUIET)
+
+    if(glm_FOUND)
+        message(STATUS "GLM version used: SYSTEM")
+    elseif(WITH_GLM STREQUAL "system")
+        message(FATAL_ERROR "GLM: system package is not found or is unusable")
+    endif()
 endif()
+
+if(WITH_GLM STREQUAL "bundled" OR (WITH_GLM STREQUAL "auto" AND NOT glm_FOUND))
+    message(STATUS "GLM version used: BUNDLED")
+
+    set(GLM_BASE_PATH "${EXTERNALS_DIR}")
+
+    if(NOT EXISTS "${GLM_BASE_PATH}/glm/CMakeLists.txt")
+        set(GLM_ZIP "${DOWNLOADS_DIR}/glm.zip")
+        file(DOWNLOAD "https://github.com/g-truc/glm/releases/download/0.9.9.8/glm-0.9.9.8.zip" "${GLM_ZIP}" TIMEOUT 60 TLS_VERIFY ON)
+
+        file(MAKE_DIRECTORY "${GLM_BASE_PATH}/glm")
+        execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf "${GLM_ZIP}" WORKING_DIRECTORY "${GLM_BASE_PATH}")
+    endif()
+
+    add_subdirectory("${GLM_BASE_PATH}/glm" "${PROJECT_BINARY_DIR}/glm" EXCLUDE_FROM_ALL)
+endif()
+
+add_subdirectory(libs/Box2D)
+add_subdirectory(libs/lua)
+add_subdirectory(libs/GL)
+
+# json11
+if(SERIOUSPROTON_WITH_JSON)
+    SET(WITH_JSON "bundled" CACHE STRING "Which json11 to use (possible values are 'bundled' or 'system')")
+
+    if(WITH_JSON STREQUAL "system")
+        find_package(json11 QUIET)
+        if(json11_FOUND)
+            message(STATUS "json11 version used: SYSTEM")
+        else()
+            message(FATAL_ERROR "json11: system package is not found or is unusable")
+        endif()
+    elseif(WITH_JSON STREQUAL "bundled")
+        message(STATUS "json11 version used: BUNDLED")
+        add_subdirectory(libs/json11)
+    endif()
+endif()
+
+SET(WITH_OPUS "bundled" CACHE STRING "Which opus library to use (possible values are 'bundled' or 'system')")
+
+if(WITH_OPUS STREQUAL "system")
+    find_package(PkgConfig)
+    pkg_check_modules(OPUS REQUIRED opus)
+    message(STATUS "opus version used: SYSTEM")
+    add_library(opus INTERFACE)
+    target_link_libraries(opus ${OPUS_LIBRARIES})
+    target_include_directories(opus PUBLIC ${OPUS_INCLUDE_DIRS})
+    target_compile_options(opus PUBLIC ${OPUS_CFLAGS_OTHER})
+elseif(WITH_OPUS STREQUAL "bundled")
+    message(STATUS "opus version used: BUNDLED")
+    add_subdirectory(libs/libopus)
+endif()
+
 
 #---------------------------------File lists-----------------------------------
 set(source_files #All SeriousProton's objects to compile
+    src/audio/source.cpp
+    src/audio/sound.cpp
+    src/audio/music.cpp
     src/clipboard.cpp
     src/collisionable.cpp
     src/engine.cpp
     src/event.cpp
-    src/fixedSocket.cpp
     src/gameEntity.cpp
-    src/httpServer.cpp
     src/i18n.cpp
     src/input.cpp
     src/logging.cpp
@@ -120,10 +192,73 @@ set(source_files #All SeriousProton's objects to compile
     src/shaderManager.cpp
     src/soundManager.cpp
     src/stringImproved.cpp
+    src/stringutil/base64.cpp
+    src/stringutil/sha1.cpp
     src/textureManager.cpp
+    src/timer.cpp
     src/tween.cpp
     src/Updatable.cpp
     src/windowManager.cpp
+    src/io/network/address.cpp
+    src/io/network/selector.cpp
+    src/io/network/socketBase.cpp
+    src/io/network/tcpListener.cpp
+    src/io/network/tcpSocket.cpp
+    src/io/network/udpSocket.cpp
+    src/io/http/request.cpp
+    src/io/http/server.cpp
+    src/io/http/websocket.cpp
+
+    src/audio/source.h
+    src/audio/sound.h
+    src/audio/music.h
+    src/clipboard.h
+    src/collisionable.h
+    src/dynamicLibrary.h
+    src/engine.h
+    src/event.h
+    src/gameEntity.h
+    src/i18n.h
+    src/input.h
+    src/io/dataBuffer.h
+    src/io/http/request.h
+    src/io/http/server.h
+    src/io/http/websocket.h
+    src/io/network/address.h
+    src/io/network/selector.h
+    src/io/network/socketBase.h
+    src/io/network/tcpListener.h
+    src/io/network/tcpSocket.h
+    src/io/network/udpSocket.h
+    src/logging.h
+    src/multiplayer_client.h
+    src/multiplayer.h
+    src/multiplayer_internal.h
+    src/multiplayer_proxy.h
+    src/multiplayer_server.h
+    src/multiplayer_server_scanner.h
+    src/networkAudioStream.h
+    src/networkRecorder.h
+    src/nonCopyable.h
+    src/P.h
+    src/PlayerController.h
+    src/postProcessManager.h
+    src/random.h
+    src/Renderable.h
+    src/resources.h
+    src/scriptInterface.h
+    src/scriptInterfaceMagic.h
+    src/shaderManager.h
+    src/soundManager.h
+    src/stringImproved.h
+    src/stringutil/base64.h
+    src/stringutil/sha1.h
+    src/textureManager.h
+    src/tween.h
+    src/timer.h
+    src/Updatable.h
+    src/vectorUtils.h
+    src/windowManager.h
 )
 
 if(NOT ANDROID)
@@ -173,6 +308,8 @@ if(NOT ${SFML_FOUND})
     add_dependencies(seriousproton_deps SFML)
 endif()
 
+find_package(Threads REQUIRED)
+
 target_compile_definitions(seriousproton_deps
     INTERFACE
         SFML_NO_DEPRECATED_WARNINGS # SFML 2.5 gives deprication warnings on a few functions we use. But we maintain 2.3 compatibility, so ignore those warnings.
@@ -192,8 +329,8 @@ target_compile_options(seriousproton_deps
 
 target_link_libraries(seriousproton_deps
     INTERFACE 
-        box2d lua glew ${SFML_LIBRARIES}
-        "$<$<BOOL:${WIN32}>:wsock32>"
+        box2d lua glew ${SFML_LIBRARIES} glm::glm Threads::Threads
+        $<$<BOOL:${WIN32}>:wsock32 ws2_32 crypt32>
         # LTO flag must be on the linker's list as well.
         "$<$<AND:$<BOOL:${CMAKE_COMPILER_IS_GNUCC}>,$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Release>>>:-flto>"
         "$<BUILD_INTERFACE:opus;$<$<BOOL:${SERIOUSPROTON_WITH_JSON}>:json11>;$<$<NOT:$<BOOL:${ANDROID}>>:${CMAKE_DL_LIBS}>>"
@@ -258,7 +395,6 @@ if(WIN32)
             "${SFML_ROOT}/bin/OpenAL32.dll"
             "${SFML_ROOT}/bin/sfml-audio-2.dll"
             "${SFML_ROOT}/bin/sfml-graphics-2.dll"
-            "${SFML_ROOT}/bin/sfml-network-2.dll"
             "${SFML_ROOT}/bin/sfml-system-2.dll"
             "${SFML_ROOT}/bin/sfml-window-2.dll"
         DESTINATION .

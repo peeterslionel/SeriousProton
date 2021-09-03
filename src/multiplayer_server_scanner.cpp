@@ -1,5 +1,5 @@
 #include "multiplayer_server_scanner.h"
-
+#include "io/http/request.h"
 
 ServerScanner::ServerScanner(int version_number, int server_port)
 : server_port(server_port), version_number(version_number)
@@ -9,13 +9,13 @@ ServerScanner::ServerScanner(int version_number, int server_port)
 ServerScanner::~ServerScanner()
 {
     destroy();
-    if (master_server_scan_thread)
-        master_server_scan_thread->wait();
+    if (master_server_scan_thread.joinable())
+        master_server_scan_thread.join();
 }
 
 void ServerScanner::scanMasterServer(string url)
 {
-    if (master_server_scan_thread)
+    if (master_server_scan_thread.joinable())
         return;
     LOG(INFO) << "Switching to master server scanning";
     if (socket)
@@ -23,19 +23,19 @@ void ServerScanner::scanMasterServer(string url)
         socket = nullptr;
     }
 
-    server_list_mutex.lock();
-    for(unsigned int n=0; n<server_list.size(); n++)
     {
-        if (removedServerCallback)
-            removedServerCallback(server_list[n].address);
-        server_list.erase(server_list.begin() + n);
-        n--;
+        std::lock_guard<std::mutex> guard(server_list_mutex);
+        for(unsigned int n=0; n<server_list.size(); n++)
+        {
+            if (removedServerCallback)
+                removedServerCallback(server_list[n].address);
+            server_list.erase(server_list.begin() + n);
+            n--;
+        }
     }
-    server_list_mutex.unlock();
 
     master_server_url = url;
-    master_server_scan_thread = std::unique_ptr<sf::Thread>(new sf::Thread(&ServerScanner::masterServerScanThread, this));
-    master_server_scan_thread->launch();
+    master_server_scan_thread = std::move(std::thread(&ServerScanner::masterServerScanThread, this));
 }
 
 void ServerScanner::scanLocalNetwork()
@@ -45,10 +45,9 @@ void ServerScanner::scanLocalNetwork()
 
     LOG(INFO) << "Switching to local server scanning";
     master_server_url = "";
-    if (master_server_scan_thread)
+    if (master_server_scan_thread.joinable())
     {
-        master_server_scan_thread->wait();
-        master_server_scan_thread = nullptr;
+        master_server_scan_thread.join();
     }
 
     server_list_mutex.lock();
@@ -61,13 +60,15 @@ void ServerScanner::scanLocalNetwork()
     }
     server_list_mutex.unlock();
 
-    socket = std::unique_ptr<sf::UdpSocket>(new sf::UdpSocket());
+    socket = std::make_unique<sp::io::network::UdpSocket>();
     int port_nr = server_port + 1;
-    while(socket->bind(static_cast<uint16_t>(port_nr)) != sf::UdpSocket::Done)
+    while(!socket->bind(static_cast<uint16_t>(port_nr)))
         port_nr++;
+    if (!socket->joinMulticast(666))
+        LOG(ERROR, "Failed to join multicast for local network discovery");
 
     socket->setBlocking(false);
-    broadcast_clock.restart();
+    broadcast_timer.repeat(BroadcastTimeout);
 }
 
 void ServerScanner::update(float /*gameDelta*/)
@@ -75,7 +76,7 @@ void ServerScanner::update(float /*gameDelta*/)
     server_list_mutex.lock();
     for(unsigned int n=0; n<server_list.size(); n++)
     {
-        if (server_list[n].timeout_clock.getElapsedTime().asSeconds() > ServerTimeout)
+        if (server_list[n].timeout.isExpired())
         {
             if (removedServerCallback)
                 removedServerCallback(server_list[n].address);
@@ -87,18 +88,17 @@ void ServerScanner::update(float /*gameDelta*/)
 
     if (socket)
     {
-        if (broadcast_clock.getElapsedTime().asSeconds() > BroadcastTimeout)
+        if (broadcast_timer.isExpired())
         {
-            sf::Packet sendPacket;
+            sp::io::DataBuffer sendPacket;
             sendPacket << multiplayerVerficationNumber << "ServerQuery" << int32_t(version_number);
-            UDPbroadcastPacket(*socket, sendPacket, server_port);
-            broadcast_clock.restart();
+            socket->sendMulticast(sendPacket, 666, server_port);
         }
 
-        sf::IpAddress recv_address;
-        unsigned short recv_port;
-        sf::Packet recv_packet;
-        while(socket->receive(recv_packet, recv_address, recv_port) == sf::UdpSocket::Done)
+        sp::io::network::Address recv_address;
+        int recv_port;
+        sp::io::DataBuffer recv_packet;
+        while(socket->receive(recv_packet, recv_address, recv_port))
         {
             int32_t verification, version_nr;
             string name;
@@ -111,34 +111,34 @@ void ServerScanner::update(float /*gameDelta*/)
     }
 }
 
-void ServerScanner::updateServerEntry(sf::IpAddress address, int port, string name)
+void ServerScanner::updateServerEntry(sp::io::network::Address address, int port, string name)
 {
-    sf::Lock lock(server_list_mutex);
-    
+    std::lock_guard<std::mutex> guard(server_list_mutex);
+
     for(unsigned int n=0; n<server_list.size(); n++)
     {
         if (server_list[n].address == address)
         {
             server_list[n].port = port;
             server_list[n].name = name;
-            server_list[n].timeout_clock.restart();
+            server_list[n].timeout.start(ServerTimeout);
             return;
         }
     }
 
-    LOG(INFO) << "ServerScanner::New server: " << address.toString() << " " << port << " " << name;
+    LOG(INFO) << "ServerScanner::New server: " << address.getHumanReadable()[0] << " " << port << " " << name;
     ServerInfo si;
     si.address = address;
     si.port = port;
     si.name = name;
-    si.timeout_clock.restart();
+    si.timeout.start(ServerTimeout);
     server_list.push_back(si);
     
     if (newServerCallback)
         newServerCallback(address, name);
 }
 
-void ServerScanner::addCallbacks(std::function<void(sf::IpAddress, string)> newServerCallbackIn, std::function<void(sf::IpAddress)> removedServerCallbackIn)
+void ServerScanner::addCallbacks(std::function<void(sp::io::network::Address, string)> newServerCallbackIn, std::function<void(sp::io::network::Address)> removedServerCallbackIn)
 {
     this->newServerCallback = newServerCallbackIn;
     this->removedServerCallback = removedServerCallbackIn;
@@ -147,9 +147,10 @@ void ServerScanner::addCallbacks(std::function<void(sf::IpAddress, string)> newS
 std::vector<ServerScanner::ServerInfo> ServerScanner::getServerList()
 {   
     std::vector<ServerScanner::ServerInfo> ret;
-    server_list_mutex.lock();
-    ret = server_list;
-    server_list_mutex.unlock();
+    {
+        std::lock_guard<std::mutex> guard(server_list_mutex);
+        ret = server_list;
+    }
     return ret;
 }
 
@@ -184,22 +185,20 @@ void ServerScanner::masterServerScanThread()
 
     LOG(INFO) << "Reading servers from master server " << master_server_url;
 
-    sf::Http http(hostname, static_cast<uint16_t>(port));
+    sp::io::http::Request http(hostname, port);
     while(!isDestroyed() && master_server_url != "")
     {
-        sf::Http::Request request(uri, sf::Http::Request::Get);
-        sf::Http::Response response = http.sendRequest(request, sf::seconds(10.0f));
-        
-        if (response.getStatus() != sf::Http::Response::Ok)
+        auto response = http.get(uri);
+        if (response.status != 200)
         {
-            LOG(WARNING) << "Failed to query master server " << master_server_url << " (status " << response.getStatus() << ")";
+            LOG(WARNING) << "Failed to query master server " << master_server_url << " (status " << response.status << ")";
         }
-        for(string line : string(response.getBody()).split("\n"))
+        for(string line : response.body.split("\n"))
         {
             std::vector<string> parts = line.split(":", 3);
             if (parts.size() == 4)
             {
-                sf::IpAddress address(parts[0]);
+                sp::io::network::Address address(parts[0]);
                 int part_port = parts[1].toInt();
                 int version = parts[2].toInt();
                 string name = parts[3];
@@ -212,6 +211,6 @@ void ServerScanner::masterServerScanThread()
         }
         
         for(int n=0;n<10 && !isDestroyed() && master_server_url != ""; n++)
-            sf::sleep(sf::seconds(1.0f));
+            std::this_thread::sleep_for(std::chrono::duration<float>(1.f));
     }
 }

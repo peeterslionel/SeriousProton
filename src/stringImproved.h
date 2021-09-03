@@ -3,6 +3,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <string_view>
 #include <limits>
 #include <vector>
 #include <map>
@@ -21,6 +22,7 @@ class string : public std::string
 {
 public:
     string() : std::string() {}
+    string(std::string_view str) : std::string(str) {}
     string(const std::string& str) : std::string(str) {}
     string(const char* str) : std::string(str) {}
     string(const char* str, int length) : std::string(str, length) {}
@@ -136,11 +138,15 @@ public:
         With optional start, test S beginning at that position.
         With optional end, stop comparing S at that position.
     */
-    bool endswith(const string &suffix) const
+    bool endswith(std::string_view suffix) const
     {
         if (suffix.length() == 0)
             return true;
         return substr(-int(suffix.length())) == suffix;
+    }
+    bool endswith(char suffix) const
+    {
+        return !empty() && (*this)[length()-1] == suffix;
     }
 
     /*
@@ -153,17 +159,17 @@ public:
         int p = 0;
         int t;
         int start = 0;
-        int end = find("\r");
-        if (find("\n") > -1 && (end == -1 || find("\n") < end))
-            end = find("\n");
-        while((t = find("\t", p)) > -1)
+        int end = find('\r');
+        if (find('\n') > -1 && (end == -1 || find('\n') < end))
+            end = find('\n');
+        while((t = find('\t', p)) > -1)
         {
             while(end != -1 && end < t)
             {
                 start = end + 1;
-                end = find("\r", start);
-                if (find("\n", start) > -1 && (end == -1 || find("\n", start) < end))
-                    end = find("\n", start);
+                end = find('\r', start);
+                if (find('\n', start) > -1 && (end == -1 || find('\n', start) < end))
+                    end = find('\n', start);
             }
             ret += substr(p, t) + string(" ") * (tabsize - ((t - start) % tabsize));
             p = t + 1;
@@ -177,13 +183,27 @@ public:
         such that sub is contained within s[start:end].  Optional
         arguments start and end are interpreted as in slice notation.
     */
-    int find(const string &sub, int start=0) const
+    int find(std::string_view sub, int start=0) const
     {
-        if (sub.length() + start > length() || sub.length() < 1)
+        if (sub.length() + start > length())
             return -1;
+        if (sub.length() < 1)
+            return start;
+        std::string_view sv{*this};
         for(unsigned int n=start; n<=length() - sub.length(); n++)
         {
-            if(substr(n, n+int(sub.length())) == sub)
+            if(sv.substr(n, int(sub.length())) == sub)
+                return n;
+        }
+        return -1;
+    }
+    int find(char sub, int start=0) const
+    {
+        if (start >= int(length()))
+            return -1;
+        for(unsigned int n=start; n<length(); n++)
+        {
+            if((*this)[n] == sub)
                 return n;
         }
         return -1;
@@ -414,7 +434,7 @@ public:
     string lstrip(const string &chars=_WHITESPACE) const
     {
         int start=0;
-        while(chars.find(substr(start, start+1)) > -1)
+        while(start < int(length()) && chars.find(substr(start, start+1)) > -1)
             start++;
         return substr(start);
     }
@@ -424,7 +444,15 @@ public:
         the separator itand the part after it.  If the separator is not
         found, return S and two empty strings.
     */
-    std::vector<string> partition(const string &sep) const;
+    std::pair<string, string> partition(const string &sep) const
+    {
+        int index = find(sep);
+        if (index < 0)
+        {
+            return {*this, ""};
+        }
+        return {substr(0, index), substr(index + sep.length())};
+    }
 
     /*
         Return a copy of string S with all occurrences of substring
@@ -461,9 +489,10 @@ public:
     {
         if (sub.length() + start > length())
             return -1;
+        std::string_view sv{*this};
         for(int n=int(length()) - int(sub.length()); n>=start; n--)
         {
-            if(substr(n, n+int(sub.length())) == sub)
+            if(sv.substr(n, int(sub.length())) == sub)
                 return n;
         }
         return -1;
@@ -503,7 +532,7 @@ public:
     string rstrip(const string &chars=_WHITESPACE) const
     {
         int end=int(length())-1;
-        while(chars.find(substr(end, end+1)) > -1)
+        while(end >= -1 && chars.find(substr(end, end+1)) > -1)
             end--;
         return substr(0, end+1);
     }

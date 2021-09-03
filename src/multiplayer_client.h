@@ -1,11 +1,15 @@
 #ifndef MULTIPLAYER_CLIENT_H
 #define MULTIPLAYER_CLIENT_H
 
-#include <stdint.h>
-#include "fixedSocket.h"
+#include "io/network/tcpSocket.h"
 #include "Updatable.h"
 #include "multiplayer_server.h"
 #include "networkAudioStream.h"
+#include "timer.h"
+
+#include <stdint.h>
+#include <thread>
+
 
 class GameClient;
 class MultiplayerObject;
@@ -14,7 +18,7 @@ extern P<GameClient> game_client;
 
 class GameClient : public Updatable
 {
-    constexpr static float no_data_disconnect_time = 20.0f;
+    constexpr static float no_data_disconnect_time = 20;
 public:
     enum Status
     {
@@ -37,20 +41,20 @@ public:
     };
 private:
     int version_number;
-    sf::IpAddress server;
+    sp::io::network::Address server;
     int port_nr;
 
-    TcpSocket socket;
+    sp::io::network::TcpSocket socket;
     std::unordered_map<int32_t, P<MultiplayerObject> > objectMap;
     int32_t client_id;
     Status status;
-    sf::Clock last_receive_time;
+    sp::SystemTimer no_data_timeout;
     NetworkAudioStreamManager audio_stream_manager;
 
-    sf::Thread connect_thread;
+    std::thread connect_thread;
     DisconnectReason disconnect_reason{ DisconnectReason::Unknown };
 public:
-    GameClient(int version_number, sf::IpAddress server, int port_nr = defaultServerPort);
+    GameClient(int version_number, sp::io::network::Address server, int port_nr = defaultServerPort);
     virtual ~GameClient();
 
     P<MultiplayerObject> getObjectById(int32_t id);
@@ -60,7 +64,7 @@ public:
     Status getStatus() { return status; }
     DisconnectReason getDisconnectReason() const { return disconnect_reason; }
 
-    void sendPacket(sf::Packet& packet);
+    void sendPacket(sp::io::DataBuffer& packet);
 
     void sendPassword(string password);
 private:

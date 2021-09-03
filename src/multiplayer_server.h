@@ -1,13 +1,19 @@
 #ifndef MULTIPLAYER_SERVER_H
 #define MULTIPLAYER_SERVER_H
 
-#include <stdint.h>
-#include <unordered_map>
-#include <unordered_set>
-#include "fixedSocket.h"
+#include "io/network/udpSocket.h"
+#include "io/network/tcpSocket.h"
+#include "io/network/tcpListener.h"
 #include "Updatable.h"
 #include "stringImproved.h"
 #include "networkAudioStream.h"
+#include "timer.h"
+
+#include <stdint.h>
+#include <unordered_map>
+#include <unordered_set>
+#include <thread>
+
 
 static const int defaultServerPort = 35666;
 static const int multiplayerVerficationNumber = 0x2fab3f0f; //Used to verify that the server is actually a serious proton server
@@ -19,16 +25,16 @@ extern P<GameServer> game_server;
 
 class GameServer : public Updatable
 {
-    sf::Clock updateTimeClock;
-    sf::Clock aliveClock;
-    sf::UdpSocket broadcast_listen_socket;
-    sf::TcpListener listenSocket;
-    std::unique_ptr<TcpSocket> new_socket;
+    sp::SystemStopwatch last_update_time;
+    sp::SystemTimer keep_alive_send_timer;
+    sp::io::network::UdpSocket broadcast_listen_socket;
+    sp::io::network::TcpListener listenSocket;
+    std::unique_ptr<sp::io::network::TcpSocket> new_socket;
     string server_name;
     int listen_port;
     int version_number;
     string server_password;
-    
+
     int sendDataCounter;
     int sendDataCounterPerClient;
     float sendDataRate;
@@ -46,12 +52,12 @@ class GameServer : public Updatable
     };
     struct ClientInfo
     {
-        std::unique_ptr<TcpSocket> socket;
+        std::unique_ptr<sp::io::network::TcpSocket> socket;
         int32_t client_id;
         int32_t command_client_id;
         EClientReceiveState receive_state;
         int32_t command_object_id;
-        sf::Clock round_trip_time;
+        sp::SystemStopwatch round_trip_start_time;
         int32_t ping;
         std::vector<int32_t> proxy_ids;
     };
@@ -64,12 +70,12 @@ class GameServer : public Updatable
     std::unordered_map<int32_t, P<MultiplayerObject> > objectMap;
 
     string master_server_url;
-    sf::Thread master_server_update_thread;
+    std::thread master_server_update_thread;
 public:
     GameServer(string server_name, int versionNumber, int listenPort = defaultServerPort);
     virtual ~GameServer();
 
-    void connectToProxy(sf::IpAddress address, int port = defaultServerPort);
+    void connectToProxy(sp::io::network::Address address, int port = defaultServerPort);
 
     virtual void destroy() override;
 
@@ -89,15 +95,15 @@ public:
     void startAudio(int32_t client_id, int32_t target_identifier);
     void gotAudioPacket(int32_t client_id, const unsigned char* packet, int packet_size);
     void stopAudio(int32_t client_id);
-    void sendAudioPacketFrom(int32_t client_id, sf::Packet& packet);
+    void sendAudioPacketFrom(int32_t client_id, sp::io::DataBuffer& packet);
 private:
     void registerObject(P<MultiplayerObject> obj);
-    void broadcastServerCommandFromObject(int32_t id, sf::Packet& packet);
+    void broadcastServerCommandFromObject(int32_t id, sp::io::DataBuffer& packet);
     void keepAliveAll();
-    void sendAll(sf::Packet& packet);
+    void sendAll(sp::io::DataBuffer& packet);
 
-    void generateCreatePacketFor(P<MultiplayerObject> obj, sf::Packet& packet);
-    void generateDeletePacketFor(int32_t id, sf::Packet& packet);
+    void generateCreatePacketFor(P<MultiplayerObject> obj, sp::io::DataBuffer& packet);
+    void generateDeletePacketFor(int32_t id, sp::io::DataBuffer& packet);
     
     void handleNewClient(ClientInfo& info);
     void handleNewProxy(ClientInfo& info, int32_t temp_id);

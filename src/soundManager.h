@@ -1,10 +1,13 @@
 #ifndef SOUNDMANAGER_H
 #define SOUNDMANAGER_H
 
-#include <SFML/Audio.hpp>
+#include "audio/music.h"
+#include "audio/sound.h"
 
 #include <unordered_map>
 #include <vector>
+#include <array>
+#include "timer.h"
 #include "resources.h"
 #include "stringImproved.h"
 
@@ -24,22 +27,32 @@ private:
     };
     struct MusicChannel
     {
-        P<ResourceStream> stream;
-        P<ResourceStream> next_stream;
-        sf::Music music;
+        string next_stream;
+        sp::audio::Music music;
         FadeMode mode;
         float fade_delay;
     };
-    sf::Clock clock;
+    struct SoundChannel
+    {
+        bool positional = false;
+        float min_distance = 1.0;
+        float attenuation = 30.0;
+        float volume = 1.0;
+        glm::vec2 position;
+        sp::audio::SoundPlayback playback;
+    };
+    sp::SystemStopwatch clock;
     MusicChannel music_channel;
 
     std::vector<string> music_set;
 
-    std::unordered_map<string, sf::SoundBuffer*> soundMap;
-    std::vector<sf::Sound> activeSoundList;
+    std::unordered_map<string, sp::audio::Sound*> sound_map;
+    std::array<SoundChannel, 16> active_sound_list;
     float music_volume;
     float master_sound_volume;
+
     bool positional_sound_enabled;
+    glm::vec2 listener_position;
 public:
     SoundManager();
     ~SoundManager();
@@ -55,8 +68,8 @@ public:
     int playSound(string name, float pitch = 1.0f, float volume = 100.0f, bool loop = false);
 
     // Positional sounds
-    int playSound(string name, sf::Vector2f position, float min_distance, float attenuation, float pitch = 1.0f, float volume = 100.0f, bool loop = false);
-    void setListenerPosition(sf::Vector2f position, float angle);
+    int playSound(string name, glm::vec2 position, float min_distance, float attenuation, float pitch = 1.0f, float volume = 100.0f, bool loop = false);
+    void setListenerPosition(glm::vec2 position, float angle);
     void disablePositionalSound();
 
     // Sound management
@@ -64,18 +77,14 @@ public:
     void setMasterSoundVolume(float volume); // Valid values 0.0f-100.0f
     float getMasterSoundVolume();
     void setSoundVolume(int index, float volume); // Valid values 0.0f-100.0f
-    float getSoundVolume(int index);
     void setSoundPitch(int index, float volume); // Valid values 0.0f+; 1.0 = default
-    float getSoundPitch(int index);
 
-    // TTS
-    void setTextToSpeachVoice(string name);
-    void playTextToSpeech(string text);
 private:
-    int playSoundData(sf::SoundBuffer* data, float pitch, float volume, bool loop = false);
-    sf::SoundBuffer* loadSound(string name);
+    int playSoundData(sp::audio::Sound* data, float pitch, float volume, bool loop = false);
+    sp::audio::Sound* loadSound(const string& name);
+    void updateChannelVolume(SoundChannel& channel);
 
-    void startMusic(P<ResourceStream> stream, bool loop=false);
+    void startMusic(const string& name, bool loop=false);
 
     void updateTick();
     void updateChannel(MusicChannel& channel, float delta);
