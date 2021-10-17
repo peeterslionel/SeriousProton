@@ -46,6 +46,10 @@ bool NetworkAudioRecorder::onProcessSamples(const sf::Int16* samples, std::size_
 
 void NetworkAudioRecorder::update(float /*delta*/)
 {
+    //Desactivation du voice chat, qui fait parfois planter.
+    //FIXME lorsque prochain merge sans SFML (a priori)
+    return;
+    
     for(size_t idx=0; idx<keys.size(); idx++)
     {
         if (InputHandler::keyboardIsPressed(keys[idx].key) && active_key_index == -1)
