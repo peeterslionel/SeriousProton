@@ -6,18 +6,12 @@
 
 #include <transcoder/basisu_transcoder.h>
 
-namespace {
-	// one block per 4x4(=16) pixels.
-	constexpr uint32_t pixels_per_block = 4 * 4;
-	constexpr uint32_t getBlockCount(const glm::uvec2& size)
-	{
-		return (size.x * size.y + pixels_per_block - 1) / pixels_per_block;
-	}
+#include <transcoder/basisu_transcoder.h>
 
+namespace {
 	basist::transcoder_texture_format uastcLoadFormat(const glm::uvec2& size, bool has_alpha, const std::optional<glm::uvec2>& threshold)
 	{
 		using format_t = basist::transcoder_texture_format;
-
 		if (threshold.has_value())
 		{
 			// Do we want uncompressed (texture atlas)
@@ -58,7 +52,6 @@ namespace {
 	{
 		// https://github.com/BinomialLLC/basis_universal/wiki/OpenGL-texture-format-enums-table
 		using format_t = basist::transcoder_texture_format;
-
 		switch (format)
 		{
 			// ASTC
@@ -109,21 +102,20 @@ namespace {
 			[[fallthrough]];
 		case GL_COMPRESSED_RGBA8_ETC2_EAC: // ETC2
 			[[fallthrough]];
+		case GL_COMPRESSED_RGBA_PVRTC_4BPPV2_IMG: // PVRTC2
+			[[fallthrough]];
+		case GL_COMPRESSED_RGBA_PVRTC_4BPPV1_IMG: // PVRTC1 (RGBA)
+			[[fallthrough]];
 		case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT: // BC3 (RGBA)
 			return 16;
 
 			// 8 B (RGB formats)
-		case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG: // PVRTC1
-			[[fallthrough]];
-		case GL_COMPRESSED_RGBA_PVRTC_4BPPV1_IMG: // PVRTC1 (RGBA)
-			[[fallthrough]];
-		case GL_COMPRESSED_RGBA_PVRTC_4BPPV2_IMG: // PVRTC2
+		case GL_COMPRESSED_RGB_PVRTC_4BPPV1_IMG: // PVRTC1 (RGB)
 			[[fallthrough]];
 		case GL_COMPRESSED_RGB_S3TC_DXT1_EXT: // BC1
 			[[fallthrough]];
 		case GL_ETC1_RGB8_OES: // ETC1
 			return 8;
-
 		default:
 			return 0; // not a block format/unrecognized.
 		}
@@ -157,9 +149,9 @@ namespace sp {
 				else
 				{
 					auto block_size = basist::basis_get_bytes_per_block_or_pixel(format);
-					
-					// each item in the pixels array is 4B.
-					pixels.resize(getBlockCount(source_size) * bytesPerBlock(basistFormatCast(format)) / 4);
+					auto blocks_width = (transcoder.get_width() + 4 - 1) / 4;
+					auto blocks_height = (transcoder.get_height() + 4 - 1) / 4;
+					pixels.resize(blocks_width * blocks_height * block_size / 4);
 				}
 
 				
@@ -199,7 +191,10 @@ void BasicTexture::bind()
 
 		if (image.getFormat() != 0)
 		{
-			const auto compressed_size = getBlockCount(image.getSize()) * bytesPerBlock(image.getFormat());
+			auto block_size = bytesPerBlock(image.getFormat());
+			auto blocks_width = (image.getSize().x + 4 - 1) / 4;
+			auto blocks_height = (image.getSize().y + 4 - 1) / 4;
+			const auto compressed_size =  blocks_width * blocks_height * block_size;
 			glCompressedTexImage2D(GL_TEXTURE_2D, 0, image.getFormat(), image.getSize().x, image.getSize().y, 0, static_cast<GLsizei>(compressed_size), image.getPtr());
 		}
 		else
