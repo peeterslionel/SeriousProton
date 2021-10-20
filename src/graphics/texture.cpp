@@ -6,8 +6,6 @@
 
 #include <transcoder/basisu_transcoder.h>
 
-#include <transcoder/basisu_transcoder.h>
-
 namespace {
 	basist::transcoder_texture_format uastcLoadFormat(const glm::uvec2& size, bool has_alpha, const std::optional<glm::uvec2>& threshold)
 	{
