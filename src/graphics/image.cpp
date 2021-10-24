@@ -39,6 +39,7 @@ Image::Image(glm::ivec2 size_in, std::vector<glm::u8vec4>&& pixels_in)
     : pixels{ std::move(pixels_in) }, size{ size_in }
 {
     SDL_assert(static_cast<size_t>(size.x * size.y) == pixels.size());
+    this->pixels = std::move(pixels);
 }
 
 void Image::operator=(Image&& other) noexcept
