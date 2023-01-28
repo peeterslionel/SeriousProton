@@ -26,9 +26,10 @@ public:
     void update(glm::ivec2 size, const glm::u8vec4* ptr, int pitch);
     bool loadFromStream(P<ResourceStream> stream);
 
-    const glm::ivec2& getSize() const { return size; }
+    glm::ivec2 getSize() const { return size; }
     const glm::u8vec4* getPtr() const { return pixels.data(); }
     glm::u8vec4* getPtr() { return pixels.data(); }
+
 private:
     std::vector<glm::u8vec4> pixels;
     glm::ivec2 size;
