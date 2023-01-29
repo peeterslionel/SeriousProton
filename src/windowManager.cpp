@@ -16,6 +16,15 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cmath>
 #include <SDL.h>
+#include <stdlib.h>
+
+static string getFromEnvironment(const char* key, string default_value) {
+    auto value = getenv(key);
+    if (!value)
+        return default_value;
+    return value;
+}
+
 
 PVector<Window> Window::all_windows;
 void* Window::gl_context = nullptr;
@@ -141,19 +150,27 @@ void Window::create()
     auto size = calculateWindowSize();
 
 #if defined(ANDROID)
-    constexpr auto context_profile_mask = SDL_GL_CONTEXT_PROFILE_ES;
-    constexpr auto context_profile_minor_version = 0;
-
+    auto context_profile_mask = SDL_GL_CONTEXT_PROFILE_ES;
+    auto context_profile_minor_version = getFromEnvironment("SP_GL_MINOR", "0").toInt();
+#elif defined(__APPLE__)
+    auto context_profile_mask = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
+    auto context_profile_minor_version = getFromEnvironment("SP_GL_MINOR", "1").toInt();
 #else
-    constexpr auto context_profile_mask = SDL_GL_CONTEXT_PROFILE_CORE;
-    constexpr auto context_profile_minor_version = 1;
+    auto context_profile_mask = SDL_GL_CONTEXT_PROFILE_CORE;
+    auto context_profile_minor_version = getFromEnvironment("SP_GL_MINOR", "1").toInt();
 #endif
+    if (getFromEnvironment("SP_GL_PROFILE", "") == "ES")
+        context_profile_mask = SDL_GL_CONTEXT_PROFILE_ES;
+    else if (getFromEnvironment("SP_GL_PROFILE", "") == "CORE")
+        context_profile_mask = SDL_GL_CONTEXT_PROFILE_CORE;
+    else if (getFromEnvironment("SP_GL_PROFILE", "") == "COMPAT")
+        context_profile_mask = SDL_GL_CONTEXT_PROFILE_COMPATIBILITY;
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, context_profile_mask);
 #if defined(DEBUG)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 #endif
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, getFromEnvironment("SP_GL_MAJOR", "2").toInt());
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, context_profile_minor_version);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -172,8 +189,27 @@ void Window::create()
         break;
     }
     window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED_DISPLAY(display_nr), SDL_WINDOWPOS_CENTERED_DISPLAY(display_nr), size.x, size.y, flags);
-    if (!gl_context)
+    if (!window) {
+        LOG(Error, "Failed to create SDL2 window:", SDL_GetError());
+        exit(1);
+    }
+    if (!gl_context) {
         gl_context = SDL_GL_CreateContext(static_cast<SDL_Window*>(window));
+        if (!gl_context) {
+            SDL_DestroyWindow(static_cast<SDL_Window*>(window));
+            LOG(Warning, "Failed to create OpenGL context:", SDL_GetError());
+            LOG(Info, "retrying with GLES2.0 context");
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+            window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED_DISPLAY(display_nr), SDL_WINDOWPOS_CENTERED_DISPLAY(display_nr), size.x, size.y, flags);
+            gl_context = SDL_GL_CreateContext(static_cast<SDL_Window*>(window));
+        }
+        if (!gl_context) {
+            LOG(Error, "Failed to create OpenGL context:", SDL_GetError());
+            exit(1);
+        }
+    }
     if (SDL_GL_SetSwapInterval(-1))
         SDL_GL_SetSwapInterval(1);
     setupView();

@@ -7,16 +7,13 @@ namespace sp {
 
 static Shader* current_shader = nullptr;
 
-#if defined(ANDROID)
-static const char* vertex_shader_header = "#version 100\nprecision highp float;\n";
-static const char* fragment_shader_header = "#version 100\nprecision mediump float;\n";
-#else
+static const char* vertex_shader_header_es = "#version 100\nprecision highp float;\n";
+static const char* fragment_shader_header_es = "#version 100\nprecision mediump float;\n";
 static const char* vertex_shader_header = "#version 120\n";
 static const char* fragment_shader_header = "#version 120\n";
-#endif
 
 Shader::Shader(const string& name, const string& code, const std::vector<string>& defines, const std::unordered_map<string, int>& attribute_mapping)
-: attribute_mapping{attribute_mapping}, name(name), vertex_code(vertex_shader_header), fragment_code(fragment_shader_header)
+: attribute_mapping{attribute_mapping}, name(name)
 {
     for(auto str : defines)
     {
@@ -57,11 +54,12 @@ Shader::Shader(const string& name, P<ResourceStream> code_stream, const std::uno
     :Shader(name, code_stream, {}, attribute_mapping)
 {}
 
-static unsigned int compileShader(const string& name, const char* code, int type)
+static unsigned int compileShader(const string& name, const char* header, const char* code, int type)
 {
     int success;
     unsigned int shader_handle = glCreateShader(type);
-    glShaderSource(shader_handle, 1, &code, nullptr);
+    const char* code_ptr[2] = {header, code};
+    glShaderSource(shader_handle, 2, code_ptr, nullptr);
     glCompileShader(shader_handle);
     glGetShaderiv(shader_handle, GL_COMPILE_STATUS, &success);
     if (!success)
@@ -81,10 +79,11 @@ static unsigned int compileShader(const string& name, const char* code, int type
 bool Shader::compileShader()
 {
     program = 0;
-    unsigned int vertex_shader_handle = sp::compileShader(name, vertex_code.c_str(), GL_VERTEX_SHADER);
+
+    unsigned int vertex_shader_handle = sp::compileShader(name, gl::contextIsES ? vertex_shader_header_es : vertex_shader_header, vertex_code.c_str(), GL_VERTEX_SHADER);
     if (!vertex_shader_handle)
         return false;
-    unsigned int fragment_shader_handle = sp::compileShader(name, fragment_code.c_str(), GL_FRAGMENT_SHADER);
+    unsigned int fragment_shader_handle = sp::compileShader(name, gl::contextIsES ? fragment_shader_header_es : fragment_shader_header, fragment_code.c_str(), GL_FRAGMENT_SHADER);
     if (!fragment_shader_handle)
     {
         glDeleteShader(vertex_shader_handle);
