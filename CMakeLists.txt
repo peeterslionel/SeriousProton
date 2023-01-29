@@ -232,6 +232,7 @@ set(source_files #All SeriousProton's objects to compile
     src/io/network/selector.cpp
     src/io/network/socketBase.cpp
     src/io/network/tcpListener.cpp
+    src/io/network/streamSocket.cpp
     src/io/network/tcpSocket.cpp
     src/io/network/udpSocket.cpp
     src/io/http/request.cpp
@@ -272,6 +273,7 @@ set(source_files #All SeriousProton's objects to compile
     src/io/network/selector.h
     src/io/network/socketBase.h
     src/io/network/tcpListener.h
+    src/io/network/streamSocket.h
     src/io/network/tcpSocket.h
     src/io/network/udpSocket.h
     src/logging.h
@@ -307,6 +309,15 @@ set(source_files #All SeriousProton's objects to compile
     cmake/glDebug.inl.in
     "${glDebug_inl}"
 )
+
+if(STEAMSDK)
+    list(APPEND source_files
+        src/io/network/steamP2PListener.cpp
+        src/io/network/steamP2PListener.h
+        src/io/network/steamP2PSocket.cpp
+        src/io/network/steamP2PSocket.h
+    )
+endif()
 
 if(NOT ANDROID)
     list(APPEND source_files src/dynamicLibrary.cpp)
@@ -379,11 +390,30 @@ target_link_libraries(seriousproton_deps
         "$<BUILD_INTERFACE:opus;$<$<NOT:$<BOOL:${ANDROID}>>:${CMAKE_DL_LIBS}>>"
 )
 if (STEAMSDK)
-    target_link_libraries(seriousproton_deps INTERFACE steam_api)
-    target_link_directories(seriousproton_deps INTERFACE "${STEAMSDK}/redistributable_bin")
+    if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+        if(WIN32)
+            target_link_libraries(seriousproton_deps INTERFACE steam_api)
+            target_link_directories(seriousproton_deps INTERFACE "${STEAMSDK}/redistributable_bin")
+        endif()
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(seriousproton_deps INTERFACE steam_api)
+            target_link_directories(seriousproton_deps INTERFACE "${STEAMSDK}/redistributable_bin/linux32")
+        endif()
+    else()
+        if(WIN32)
+            target_link_libraries(seriousproton_deps INTERFACE steam_api64)
+            target_link_directories(seriousproton_deps INTERFACE "${STEAMSDK}/redistributable_bin/win64")
+        endif()
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(seriousproton_deps INTERFACE steam_api)
+            target_link_directories(seriousproton_deps INTERFACE "${STEAMSDK}/redistributable_bin/linux64")
+        endif()
+    endif()
     target_include_directories(seriousproton_deps INTERFACE "${STEAMSDK}/public")
     target_compile_definitions(seriousproton_deps INTERFACE STEAMSDK=1)
     message(STATUS "Using steam SDK at ${STEAMSDK}")
+else()
+    message(STATUS "Not using steam SDK")
 endif()
 
 if(NOT ANDROID)
@@ -454,7 +484,11 @@ if(WIN32)
         install(PROGRAMS "$<TARGET_PROPERTY:SDL2::SDL2,IMPORTED_LOCATION>" DESTINATION . COMPONENT runtime)
     endif()
     if(STEAMSDK)
-        install(FILES "${STEAMSDK}/redistributable_bin/steam_api.dll" DESTINATION . COMPONENT runtime)
+        if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+            install(FILES "${STEAMSDK}/redistributable_bin/steam_api.dll" DESTINATION . COMPONENT runtime)
+        else()
+            install(FILES "${STEAMSDK}/redistributable_bin/win64/steam_api64.dll" DESTINATION . COMPONENT runtime)
+        endif()
     endif()
 
     if (MINGW)
@@ -494,5 +528,12 @@ if(WIN32)
             DESTINATION .
             COMPONENT runtime
         )
+    endif()
+endif()
+if(UNIX AND STEAMSDK)
+    if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+        install(FILES "${STEAMSDK}/redistributable_bin/linux32/libsteam_api.so" DESTINATION . COMPONENT runtime)
+    else()
+        install(FILES "${STEAMSDK}/redistributable_bin/linux64/libsteam_api.so" DESTINATION . COMPONENT runtime)
     endif()
 endif()
