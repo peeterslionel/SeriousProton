@@ -5,6 +5,7 @@
 #include "multiplayer_server.h"
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 
 
 //Class to find all servers that have the correct version number. Creates a big nice list.
@@ -32,6 +33,7 @@ private:
     string master_server_url;
     std::mutex server_list_mutex;
     std::thread master_server_scan_thread;
+    std::condition_variable abort_wait;
 
     std::function<void(sp::io::network::Address, string)> newServerCallback;
     std::function<void(sp::io::network::Address)> removedServerCallback;
@@ -40,7 +42,9 @@ public:
     ServerScanner(int version_number, int server_port = defaultServerPort);
     virtual ~ServerScanner();
 
-    virtual void update(float delta);
+    virtual void destroy() override;
+
+    virtual void update(float delta) override;
     void addCallbacks(std::function<void(sp::io::network::Address, string)> newServerCallback, std::function<void(sp::io::network::Address)> removedServerCallback);
     
     void scanLocalNetwork();

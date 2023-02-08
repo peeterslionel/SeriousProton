@@ -1,13 +1,13 @@
 #ifndef LOGGING_H
 #define LOGGING_H
+#include <sstream>
 #include <string_view>
 
-#include <SFML/Graphics/Rect.hpp>
 #include <glm/vec2.hpp>
 #include "nonCopyable.h"
 #include "stringImproved.h"
 #if defined(_MSC_VER)
-#define LOG(LEVEL, ...) Logging(LOGLEVEL_ ## LEVEL, __FILE__, __LINE__, __FUNCTION__ , ##__VA_ARGS__)
+#define LOG(LEVEL, ...) Logging{LOGLEVEL_ ## LEVEL, __FILE__, __LINE__, __FUNCTION__ , ##__VA_ARGS__}
 #else
 #define LOG(LEVEL, ...) Logging(LOGLEVEL_ ## LEVEL, __FILE__, __LINE__, __PRETTY_FUNCTION__ , ##__VA_ARGS__)
 #endif
@@ -28,12 +28,13 @@ enum ELogLevel
 class Logging : sp::NonCopyable
 {
     static ELogLevel global_level;
-    static FILE* log_stream;
     bool do_logging;
+    mutable std::ostringstream stream;
+    ELogLevel level;
 public:
     Logging(ELogLevel level, std::string_view file, int line, std::string_view function_name);
     template<typename... ARGS>
-    Logging(ELogLevel level, std::string_view file, int line, std::string_view function_name, const ARGS&... args)
+    Logging(ELogLevel level, std::string_view file, int line, std::string_view function_name, ARGS&&... args)
     : Logging(level, file, line, function_name)
     {
         ((*this << args), ...);
@@ -53,10 +54,8 @@ inline const Logging& operator<<(const Logging& log, const unsigned int i) { ret
 inline const Logging& operator<<(const Logging& log, const long i) { return log << string(int(i)).c_str(); }
 inline const Logging& operator<<(const Logging& log, const unsigned long i) { return log << string(int(i)).c_str(); }
 inline const Logging& operator<<(const Logging& log, const float f) { return log << string(f).c_str(); }
-inline const Logging& operator<<(const Logging& log, const double f) { return log << string(f, 2).c_str(); }
+inline const Logging& operator<<(const Logging& log, const double f) { return log << string(float(f), 2).c_str(); }
 inline const Logging& operator<<(const Logging& log, const unsigned long long i) { return log << string(int(i)).c_str(); }
-template<typename T> inline const Logging& operator<<(const Logging& log, const sf::Vector2<T> v) { return log << v.x << "," << v.y; }
-template<typename T> inline const Logging& operator<<(const Logging& log, const sf::Rect<T> v) { return log << v.left << "," << v.top << ":" << v.width << "x" << v.height; }
 template<typename T, glm::qualifier Q> inline const Logging& operator<<(const Logging& log, const glm::vec<2, T, Q> v) { return log << v.x << "," << v.y; }
 
 #endif//LOGGING_H

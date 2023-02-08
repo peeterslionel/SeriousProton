@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
-project(SeriousProton LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.11 FATAL_ERROR)
+project(SeriousProton LANGUAGES C CXX)
 
 set(CMAKE_MODULE_PATH
     ${CMAKE_CURRENT_SOURCE_DIR}/cmake/
@@ -13,153 +13,126 @@ if(POLICY CMP0077)
 endif()
 
 # User-settings
-option(SERIOUSPROTON_WITH_JSON "Use json library." OFF)
+option(WARNING_IS_ERROR "Enable warning as errors." OFF)
+option(SHARED_SP "Build SeriousProton as a shared library, to speed up mingw linking times" OFF)
+set(STEAMSDK "" CACHE PATH "Path to steam SDK, if not supplied steam features will not be available. Steam features are NOT required.")
 
 #
 set(EXTERNALS_DIR "${PROJECT_BINARY_DIR}/externals")
 set(DOWNLOADS_DIR "${PROJECT_BINARY_DIR}/downloads")
 file(MAKE_DIRECTORY "${EXTERNAL_DIR}" "${DOWNLOADS_DIR}")
 
-# Crash Logger for MinGW
-if(WIN32)
-    option(ENABLE_CRASH_LOGGER "Enable the Dr. MinGW crash logging facilities" ON)
-    set(DRMINGW_ROOT DRMINGW_ROOT-NOTFOUND CACHE PATH "Path to Dr. MinGW")
-
-    if(NOT ENABLE_CRASH_LOGGER)
-        message(STATUS "Crash Logger is OFF")
-    else()
-        message(STATUS "Crash Logger is ON")
-
-        if(NOT DRMINGW_ROOT)
-            message(VERBOSE "Downloading Dr. MinGW")
-
-            if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
-                set(DRMINGW_ARCH "32")
-            else()
-                set(DRMINGW_ARCH "64")
-            endif()
-
-            # 0.9.x seems to give a hard time to people on Win7.
-            # Sticking with 0.8 for that reason.
-            set(DRMINGW_VERSION "0.8.2")
-            set(DRMINGW_BASENAME "drmingw-${DRMINGW_VERSION}-win${DRMINGW_ARCH}")
-            set(DRMINGW_ROOT "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}" CACHE PATH "Path to Dr. MinGW" FORCE)
-
-            if(NOT EXISTS "${DRMINGW_ROOT}/bin/exchndl.dll")
-                set(DRMINGW_ZIP "${CMAKE_CURRENT_BINARY_DIR}/${DRMINGW_BASENAME}.7z")
-
-                file(DOWNLOAD "https://github.com/jrfonseca/drmingw/releases/download/${DRMINGW_VERSION}/${DRMINGW_BASENAME}.7z" "${DRMINGW_ZIP}" TIMEOUT 60 TLS_VERIFY ON)
-                execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf "${DRMINGW_ZIP}" WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
-            endif()
-        endif()
-    endif()
-endif()
+include("cmake/DrMingw.cmake")
 
 #--------------------------------Dependencies----------------------------------
-find_package(SFML 2.5 COMPONENTS system audio window graphics)
-if(NOT ${SFML_FOUND})
-    message(STATUS "Couldn't find SFML. Building it from scratch.")
-    
-    set(SFML_ROOT "${CMAKE_CURRENT_BINARY_DIR}/SFML-prefix")
-
-    include(ExternalProject)
-
-    ExternalProject_Add(SFML
-        GIT_REPOSITORY git@github.com:SFML/SFML.git
-        GIT_TAG 2.5.1 #Always build with this tag, so we're sure it is stable.
-        GIT_SHALLOW 1 # Don't get the entire history
-        CMAKE_ARGS
-            -DBUILD_SHARED_LIBS:BOOL=$<BOOL:${WIN32}>
-            -DCMAKE_INSTALL_PREFIX:PATH=${SFML_ROOT}
-            -DCMAKE_MAKE_PROGRAM:FILEPATH=${CMAKE_MAKE_PROGRAM}
-            -DCMAKE_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}
-    )
-
-    set(SFML_INCLUDE_DIR "${SFML_ROOT}/include") #Otherwise this is filled by FindSFML.cmake.
-
-    set(_SFML_LIB_PREFIX STATIC)
-    set(_SFML_LIB_SUFFIX STATIC)
-
-    if(WIN32)
-        set(_SFML_LIB_PREFIX SHARED)
-        set(_SFML_LIB_SUFFIX LINK)
-    endif()
-
-    set(SFML_LIBRARIES
-        "-L${SFML_ROOT}/lib"
-        "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-audio${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
-        "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-graphics${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
-        "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-system${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
-        "${CMAKE_${_SFML_LIB_TYPE}_LIBRARY_PREFIX}sfml-window${CMAKE_${_SFML_LIB_SUFFIX}_LIBRARY_SUFFIX}"
-    )
+find_package(SDL2 REQUIRED)
+if(NOT DEFINED SDL2_LIBRARIES)
+    set(SDL2_LIBRARIES SDL2::SDL2 SDL2::SDL2main)
 endif()
-
 
 # GLM - OpenGL Mathematic library
 SET(WITH_GLM "auto" CACHE STRING "Which GLM to use (possible values are 'bundled', 'system' or 'auto')")
 
-if(WITH_GLM STREQUAL "system" OR WITH_GLM STREQUAL "auto")
-    find_package(glm QUIET)
+if(NOT WITH_GLM STREQUAL "bundled")
+    set(glm_find_args QUIET)
 
-    if(glm_FOUND)
-        message(STATUS "GLM version used: SYSTEM")
-    elseif(WITH_GLM STREQUAL "system")
-        message(FATAL_ERROR "GLM: system package is not found or is unusable")
+    if(WITH_GLM STREQUAL "system")
+       set(glm_find_args REQUIRED)
     endif()
+
+    # Not bundled - attempt to find system package first.
+    find_package(glm ${glm_find_args})
 endif()
 
-if(WITH_GLM STREQUAL "bundled" OR (WITH_GLM STREQUAL "auto" AND NOT glm_FOUND))
-    message(STATUS "GLM version used: BUNDLED")
-
-    set(GLM_BASE_PATH "${EXTERNALS_DIR}")
-
-    if(NOT EXISTS "${GLM_BASE_PATH}/glm/CMakeLists.txt")
-        set(GLM_ZIP "${DOWNLOADS_DIR}/glm.zip")
-        file(DOWNLOAD "https://github.com/g-truc/glm/releases/download/0.9.9.8/glm-0.9.9.8.zip" "${GLM_ZIP}" TIMEOUT 60 TLS_VERIFY ON)
-
-        file(MAKE_DIRECTORY "${GLM_BASE_PATH}/glm")
-        execute_process(COMMAND ${CMAKE_COMMAND} -E tar -xf "${GLM_ZIP}" WORKING_DIRECTORY "${GLM_BASE_PATH}")
+if(glm_FOUND)
+    message(STATUS "GLM version used: SYSTEM")
+    if(NOT TARGET glm::glm)
+        # Compatibility with older versions
+        add_library(glm::glm ALIAS glm)
     endif()
+else()
+    # We can only be coming here from:
+    #    * 'auto', if we failed to find a suitable system package,
+    #    * 'bundled'
+    message(STATUS "GLM version used: BUNDLED")
+    
+    set(GLM_VERSION "0.9.9.8")
+    set(GLM_URL "https://github.com/g-truc/glm")
+	include(FetchContent)
+	FetchContent_Declare(
+		glm
+		GIT_REPOSITORY "${GLM_URL}"
+		GIT_TAG "${GLM_VERSION}"
+	)
+	FetchContent_GetProperties(glm)
 
-    add_subdirectory("${GLM_BASE_PATH}/glm" "${PROJECT_BINARY_DIR}/glm" EXCLUDE_FROM_ALL)
+    if(NOT glm_POPULATED)
+        if(COMMAND FetchContent_Populate)
+            FetchContent_Populate(glm)
+        endif()
+        add_subdirectory(${glm_SOURCE_DIR} ${glm_BINARY_DIR} EXCLUDE_FROM_ALL)
+    endif()
 endif()
 
 add_subdirectory(libs/Box2D)
+add_subdirectory(libs/glad)
+
+# See cmake/GenerateGlDebug.cmake for details.
+get_target_property(glad_source_dir glad SOURCE_DIR)
+set(glDebug_inl "${CMAKE_CURRENT_BINARY_DIR}/include/graphics/glDebug.inl")
+add_custom_command(
+    OUTPUT "${glDebug_inl}"
+    COMMAND ${CMAKE_COMMAND} -Dglad_h="${glad_source_dir}/glad/glad.h" -DglDebug_inl="${glDebug_inl}" -P cmake/GenerateGlDebug.cmake
+    MAIN_DEPENDENCY "${glad_source_dir}/glad/glad.h"
+    DEPENDS cmake/glDebug.inl.in cmake/GenerateGlDebug.cmake
+    COMMENT "Generating glDebug.inl"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+)
+
+set_source_files_properties("${glDebug_inl}" PROPERTIES GENERATED TRUE)
+
 add_subdirectory(libs/lua)
-add_subdirectory(libs/GL)
-
-# json11
-if(SERIOUSPROTON_WITH_JSON)
-    SET(WITH_JSON "bundled" CACHE STRING "Which json11 to use (possible values are 'bundled' or 'system')")
-
-    if(WITH_JSON STREQUAL "system")
-        find_package(json11 QUIET)
-        if(json11_FOUND)
-            message(STATUS "json11 version used: SYSTEM")
-        else()
-            message(FATAL_ERROR "json11: system package is not found or is unusable")
-        endif()
-    elseif(WITH_JSON STREQUAL "bundled")
-        message(STATUS "json11 version used: BUNDLED")
-        add_subdirectory(libs/json11)
-    endif()
-endif()
 
 SET(WITH_OPUS "bundled" CACHE STRING "Which opus library to use (possible values are 'bundled' or 'system')")
 
 if(WITH_OPUS STREQUAL "system")
     find_package(PkgConfig)
-    pkg_check_modules(OPUS REQUIRED opus)
+    pkg_check_modules(Opus REQUIRED opus IMPORTED_TARGET)
     message(STATUS "opus version used: SYSTEM")
-    add_library(opus INTERFACE)
-    target_link_libraries(opus ${OPUS_LIBRARIES})
-    target_include_directories(opus PUBLIC ${OPUS_INCLUDE_DIRS})
-    target_compile_options(opus PUBLIC ${OPUS_CFLAGS_OTHER})
+    add_library(opus ALIAS PkgConfig::Opus)
 elseif(WITH_OPUS STREQUAL "bundled")
     message(STATUS "opus version used: BUNDLED")
     add_subdirectory(libs/libopus)
 endif()
 
+# FreeType 2
+set(WITH_FREETYPE2 "auto" CACHE STRING "Which FreeType2 to use (possible values are 'bundled', 'system' or 'auto')")
+
+if(NOT WITH_FREETYPE2 STREQUAL "bundled")
+
+    set(freetype2_find_args QUIET)
+
+    if(WITH_FREETYPE2 STREQUAL "system")
+       set(freetype2_find_args REQUIRED)
+    endif()
+
+    # Not bundled - attempt to find system package first.
+    find_package(Freetype 2 ${freetype2_find_args})
+endif()
+
+if(Freetype_FOUND)
+    message(STATUS "Freetype 2 version used: SYSTEM")
+else()
+    # We can only be coming here from:
+    #    * 'auto', if we failed to find a suitable system package,
+    #    * 'bundled'
+    set(Freetype_DIR libs/cmake)
+    find_package(Freetype 2 REQUIRED NO_DEFAULT_PATH)
+    message(STATUS "Freetype 2 version used: BUNDLED")
+endif()
+
+# BASIS Universal (Supercompressed GPU Texture Codec)
+add_subdirectory(libs/basis_universal)
 
 #---------------------------------File lists-----------------------------------
 set(source_files #All SeriousProton's objects to compile
@@ -170,9 +143,18 @@ set(source_files #All SeriousProton's objects to compile
     src/collisionable.cpp
     src/engine.cpp
     src/event.cpp
-    src/gameEntity.cpp
+    src/graphics/font.cpp
+    src/graphics/freetypefont.cpp
+    src/graphics/image.cpp
+    src/graphics/ktx2texture.cpp
+    src/graphics/renderTarget.cpp
+    src/graphics/texture.cpp
+    src/graphics/textureAtlas.cpp
+    src/graphics/renderTexture.cpp
+    src/graphics/shader.cpp
+    src/graphics/opengl.cpp
     src/i18n.cpp
-    src/input.cpp
+    src/keyValueTree.cpp
     src/logging.cpp
     src/multiplayer.cpp
     src/multiplayer_client.cpp
@@ -182,7 +164,6 @@ set(source_files #All SeriousProton's objects to compile
     src/networkAudioStream.cpp
     src/networkRecorder.cpp
     src/P.cpp
-    src/PlayerController.cpp
     src/postProcessManager.cpp
     src/random.cpp
     src/Renderable.cpp
@@ -199,10 +180,13 @@ set(source_files #All SeriousProton's objects to compile
     src/tween.cpp
     src/Updatable.cpp
     src/windowManager.cpp
+    src/io/keybinding.cpp
+    src/io/keyValueTreeLoader.cpp
     src/io/network/address.cpp
     src/io/network/selector.cpp
     src/io/network/socketBase.cpp
     src/io/network/tcpListener.cpp
+    src/io/network/streamSocket.cpp
     src/io/network/tcpSocket.cpp
     src/io/network/udpSocket.cpp
     src/io/http/request.cpp
@@ -217,10 +201,26 @@ set(source_files #All SeriousProton's objects to compile
     src/dynamicLibrary.h
     src/engine.h
     src/event.h
-    src/gameEntity.h
+    src/graphics/alignment.h
+    src/graphics/font.h
+    src/graphics/freetypefont.h
+    src/graphics/image.h
+    src/graphics/ktx2texture.h
+    src/graphics/renderTarget.h
+    src/graphics/texture.h
+    src/graphics/textureAtlas.h
+    src/graphics/renderTexture.h
+    src/graphics/shader.h
+    src/graphics/opengl.h
     src/i18n.h
-    src/input.h
+    src/keyValueTree.h
+    
     src/io/dataBuffer.h
+    src/io/json.h
+    src/io/keybinding.h
+    src/io/keyValueTreeLoader.h
+    src/io/pointer.h
+    src/io/textinput.h
     src/io/http/request.h
     src/io/http/server.h
     src/io/http/websocket.h
@@ -228,6 +228,7 @@ set(source_files #All SeriousProton's objects to compile
     src/io/network/selector.h
     src/io/network/socketBase.h
     src/io/network/tcpListener.h
+    src/io/network/streamSocket.h
     src/io/network/tcpSocket.h
     src/io/network/udpSocket.h
     src/logging.h
@@ -241,9 +242,9 @@ set(source_files #All SeriousProton's objects to compile
     src/networkRecorder.h
     src/nonCopyable.h
     src/P.h
-    src/PlayerController.h
     src/postProcessManager.h
     src/random.h
+    src/rect.h
     src/Renderable.h
     src/resources.h
     src/scriptInterface.h
@@ -259,7 +260,19 @@ set(source_files #All SeriousProton's objects to compile
     src/Updatable.h
     src/vectorUtils.h
     src/windowManager.h
+
+    cmake/glDebug.inl.in
+    "${glDebug_inl}"
 )
+
+if(STEAMSDK)
+    list(APPEND source_files
+        src/io/network/steamP2PListener.cpp
+        src/io/network/steamP2PListener.h
+        src/io/network/steamP2PSocket.cpp
+        src/io/network/steamP2PSocket.h
+    )
+endif()
 
 if(NOT ANDROID)
     list(APPEND source_files src/dynamicLibrary.cpp)
@@ -300,40 +313,37 @@ add_library(seriousproton_deps INTERFACE)
 
 target_include_directories(seriousproton_deps
     INTERFACE
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src;${SFML_INCLUDE_DIR}>"
+        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src;${CMAKE_CURRENT_BINARY_DIR}/include;${SDL2_INCLUDE_DIRS};${FREETYPE_INCLUDE_DIRS}>"
 )
 target_compile_features(seriousproton_deps INTERFACE cxx_std_17)
-
-if(NOT ${SFML_FOUND})
-    add_dependencies(seriousproton_deps SFML)
-endif()
 
 find_package(Threads REQUIRED)
 
 target_compile_definitions(seriousproton_deps
     INTERFACE
-        SFML_NO_DEPRECATED_WARNINGS # SFML 2.5 gives deprication warnings on a few functions we use. But we maintain 2.3 compatibility, so ignore those warnings.
-        $<$<BOOL:${MSVC}>:NOMINMAX>
+        $<$<BOOL:${MSVC}>:NOMINMAX;_CRT_SECURE_NO_WARNINGS>
         $<$<CONFIG:Debug>:DEBUG>
         # Windows: Backwards compatibility with Win7 SP1: https://docs.microsoft.com/en-us/cpp/porting/modifying-winver-and-win32-winnt
         $<$<BOOL:${WIN32}>:WINVER=0x0601;_WIN32_WINNT=0x0601>
+        $<$<AND:$<PLATFORM_ID:Android>,$<NOT:$<CONFIG:Release>>>:NDK_DEBUG=1>
 )
 
 target_compile_options(seriousproton_deps
     INTERFACE
         "$<$<AND:$<NOT:$<BOOL:${MSVC}>>,$<CONFIG:RelWithDebInfo>>:-g1>"
         "$<$<AND:$<BOOL:${CMAKE_COMPILER_IS_GNUCC}>,$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Release>>>:${OPTIMIZER_FLAGS}>"
-        "$<$<NOT:$<BOOL:${MSVC}>>:-Wall;-Werror=return-type>"
+        "$<$<NOT:$<BOOL:${MSVC}>>:-Wall;-Wextra;-Woverloaded-virtual;-Wdouble-promotion;-Wsuggest-override;-Werror=return-type;-Wno-unused-parameter;-Wno-unused-but-set-parameter>"
         "$<$<BOOL:${MSVC}>:/MP;/permissive->"
 )
 
+include("cmake/SteamSDK.cmake")
 target_link_libraries(seriousproton_deps
     INTERFACE 
-        box2d lua glew ${SFML_LIBRARIES} glm::glm Threads::Threads
-        $<$<BOOL:${WIN32}>:wsock32 ws2_32 crypt32>
+        box2d glad lua ${SDL2_LIBRARIES} glm::glm Threads::Threads ${FREETYPE_LIBRARIES} basisu-transcoder $<BUILD_INTERFACE:steamsdk>
+        $<$<BOOL:${WIN32}>:wsock32 ws2_32 crypt32 iphlpapi>
         # LTO flag must be on the linker's list as well.
         "$<$<AND:$<BOOL:${CMAKE_COMPILER_IS_GNUCC}>,$<OR:$<CONFIG:RelWithDebInfo>,$<CONFIG:Release>>>:-flto>"
-        "$<BUILD_INTERFACE:opus;$<$<BOOL:${SERIOUSPROTON_WITH_JSON}>:json11>;$<$<NOT:$<BOOL:${ANDROID}>>:${CMAKE_DL_LIBS}>>"
+        "$<BUILD_INTERFACE:opus;$<$<NOT:$<BOOL:${ANDROID}>>:${CMAKE_DL_LIBS}>>"
 )
 
 if(NOT ANDROID)
@@ -347,7 +357,16 @@ if(NOT ANDROID)
 endif()
 
 ## Object list
-add_library(seriousproton_objects OBJECT ${source_files})
+if (SHARED_SP)
+	add_library(seriousproton_objects SHARED ${source_files})
+else()
+	add_library(seriousproton_objects OBJECT ${source_files})
+endif()
+target_compile_options(seriousproton_objects
+    PRIVATE
+        "$<$<AND:$<BOOL:${CMAKE_COMPILER_IS_GNUCC}>,$<BOOL:${WARNING_IS_ERROR}>>:-Werror>"
+        "$<$<AND:$<BOOL:${MSVC}>,$<BOOL:${WARNING_IS_ERROR}>>:/WX>"
+)
 
 if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.12)
     # target_link_libraries() support for object libraries only exists since 3.12.
@@ -390,16 +409,21 @@ install(
 )
 
 if(WIN32)
-    install(
-        FILES
-            "${SFML_ROOT}/bin/OpenAL32.dll"
-            "${SFML_ROOT}/bin/sfml-audio-2.dll"
-            "${SFML_ROOT}/bin/sfml-graphics-2.dll"
-            "${SFML_ROOT}/bin/sfml-system-2.dll"
-            "${SFML_ROOT}/bin/sfml-window-2.dll"
-        DESTINATION .
-        COMPONENT runtime
-    )
+    if(MINGW)
+        # For the MinGW library, the 'imported location' looks at the dll in the wrong folder (lib instead of bin)
+        # So we have to get it by hand.
+        # Also covers backwards compatibility with SDL version < 2.0.12.
+        install(FILES "${SDL2_PREFIX}/bin/SDL2.dll" DESTINATION . COMPONENT runtime)
+    else()
+        install(PROGRAMS "$<TARGET_PROPERTY:SDL2::SDL2,IMPORTED_LOCATION>" DESTINATION . COMPONENT runtime)
+    endif()
+    if(STEAMSDK)
+        if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+            install(FILES "${STEAMSDK}/redistributable_bin/steam_api.dll" DESTINATION . COMPONENT runtime)
+        else()
+            install(FILES "${STEAMSDK}/redistributable_bin/win64/steam_api64.dll" DESTINATION . COMPONENT runtime)
+        endif()
+    endif()
 
     if (MINGW)
         macro(get_mingw_dll dll location)
@@ -438,5 +462,12 @@ if(WIN32)
             DESTINATION .
             COMPONENT runtime
         )
+    endif()
+endif()
+if(UNIX AND STEAMSDK)
+    if(${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+        install(FILES "${STEAMSDK}/redistributable_bin/linux32/libsteam_api.so" DESTINATION . COMPONENT runtime)
+    else()
+        install(FILES "${STEAMSDK}/redistributable_bin/linux64/libsteam_api.so" DESTINATION . COMPONENT runtime)
     endif()
 endif()

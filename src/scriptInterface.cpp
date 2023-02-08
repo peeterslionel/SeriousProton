@@ -12,8 +12,12 @@ static int random(lua_State* L)
     lua_pushnumber(L, random(rMin, rMax));
     return 1;
 }
-/// random(min_value, max_value)
-/// Generate a random number between the min and max value.
+/// float random(float min_value, float max_value)
+/// Returns a random floating point number between the min and max values, inclusive.
+/// Floating point numbers are fractional numbers, such as 1.5, 2.333333, 3.141.
+/// To generate an integer value, use irandom().
+/// This function is provided by SeriousProton (src/scriptInterface.cpp).
+/// Example: value = random(0.0,1.0)
 REGISTER_SCRIPT_FUNCTION(random);
 
 static int irandom(lua_State* L)
@@ -24,9 +28,41 @@ static int irandom(lua_State* L)
     lua_pushinteger(L, irandom(rMin, rMax));
     return 1;
 }
-/// random(min_value, max_value)
-/// Generate a random number between the min and max value.
+/// int irandom(int min_value, int max_value)
+/// Returns a random integer number between the min and max values, inclusive.
+/// Integer numbers are whole numbers, so 1, 2, 3, 5, 1400.
+/// To generate a floating point value, use random().
+/// This function is provided by SeriousProton (src/scriptInterface.cpp).
+/// Example: value = random(0,10)
 REGISTER_SCRIPT_FUNCTION(irandom);
+
+static int traceback(lua_State* L)
+{
+    string result;
+    int level = 1;
+    lua_Debug debug;
+    while (lua_getstack(L, level++, &debug)) {
+        lua_getinfo(L, "Slnt", &debug);
+        result += string(debug.source);
+        if (debug.currentline > 0)
+            result += ":" + string(debug.currentline);
+        if (debug.name && debug.name[0])
+            result += ":" + string(debug.name);
+        result += "\n";
+    }
+    lua_pushstring(L, result.c_str());
+    return 1;
+}
+/// string traceback()
+/// Returns a string containing a list of function calls up to the current point.
+/// Use this function for debugging and error reporting.
+/// This function is provided by SeriousProton (src/scriptInterface.cpp).
+/// Example:
+/// player:getHull()
+/// traceback = traceback()
+/// -- traceback contains the string [[player:getHull()
+/// -- traceback = traceback()]]
+REGISTER_SCRIPT_FUNCTION(traceback);
 
 static int destroyScript(lua_State* L)
 {
@@ -34,7 +70,10 @@ static int destroyScript(lua_State* L)
     obj->destroy();
     return 0;
 }
-/// Destroy this script instance. Note that the script will keep running till the end of the current script call.
+/// void destroyScript()
+/// Destroys this script instance.
+/// The script continues running until the end of the current script call.
+/// This function is provided by SeriousProton (src/scriptInterface.cpp).
 //REGISTER_SCRIPT_FUNCTION(destroyScript);//Not registered as a normal function, as it needs a reference to the ScriptObject, which is passed as an upvalue.
 
 lua_State* ScriptObject::L = NULL;

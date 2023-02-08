@@ -1,7 +1,7 @@
 #ifndef TWEEN_H
 #define TWEEN_H
 
-#include <SFML/Graphics/Color.hpp>
+#include <glm/gtc/type_precision.hpp>
 /**
 Tweening functions. Allows for none-linear effects and stuff.
  */
@@ -35,7 +35,7 @@ public:
     static inline T easeOutCubic(float time_now, float time_start, float time_end, const T& value0, const T& value1)
     {//BUGGED!
         float t = (time_now - time_start) / (time_end - time_start);
-        t -= 1.0;
+        t -= 1.0f;
         return tweenApply(-(t * t * t + 1), value0, value1);
     }
 };
@@ -46,6 +46,6 @@ T Tween<T>::tweenApply(float f, const T& value0, const T& value1)
     return value0 + (value1 - value0) * f;
 }
 
-template<> sf::Color Tween<sf::Color>::tweenApply(float f, const sf::Color& value0, const sf::Color& value1);
+template<> glm::u8vec4 Tween<glm::u8vec4>::tweenApply(float f, const glm::u8vec4& value0, const glm::u8vec4& value1);
 
 #endif//TWEEN_H

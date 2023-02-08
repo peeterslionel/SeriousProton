@@ -108,14 +108,14 @@ bool TcpListener::accept(TcpSocket& socket)
     if (!isListening())
         return false;
     
-    int result = ::accept(handle, nullptr, nullptr);
-    if (result < 0)
+    auto result = ::accept(handle, nullptr, nullptr);
+    if (result == INVALID_SOCKET)
     {
         if (!isLastErrorNonBlocking())
             close();
         return false;
     }
-    if (socket.isConnected())
+    if (socket.getState() != StreamSocket::State::Closed)
         socket.close();
     socket.handle = result;
     socket.setBlocking(socket.blocking);

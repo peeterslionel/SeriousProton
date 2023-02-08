@@ -19,7 +19,7 @@ GameServerProxy::GameServerProxy(sp::io::network::Address hostname, int hostPort
     newSocket = std::make_unique<sp::io::network::TcpSocket>();
     newSocket->setBlocking(false);
 
-    boardcastServerDelay = 0.0;
+    boardcastServerDelay = 0.0f;
     if (proxyName != "")
     {
         if (!broadcast_listen_socket.bind(static_cast<uint16_t>(listenPort)))
@@ -46,7 +46,7 @@ GameServerProxy::GameServerProxy(string password, int listenPort, string proxyNa
     newSocket = std::make_unique<sp::io::network::TcpSocket>();
     newSocket->setBlocking(false);
 
-    boardcastServerDelay = 0.0;
+    boardcastServerDelay = 0.0f;
     if (proxyName != "")
     {
         if (!broadcast_listen_socket.bind(static_cast<uint16_t>(listenPort)))
@@ -145,7 +145,7 @@ void GameServerProxy::update(float delta)
                 break;
             }
         }
-        if (!mainSocket->isConnected() || no_data_timeout.isExpired())
+        if (mainSocket->getState() == sp::io::network::StreamSocket::State::Closed || no_data_timeout.isExpired())
         {
             LOG(INFO) << "Disconnected proxy";
             mainSocket->close();
@@ -257,7 +257,7 @@ void GameServerProxy::update(float delta)
                 break;
             }
         }
-        if (info.socket == NULL || !info.socket->isConnected())
+        if (info.socket == NULL || info.socket->getState() == sp::io::network::StreamSocket::State::Closed)
         {
             if (info.validClient)
             {
@@ -304,11 +304,11 @@ void GameServerProxy::handleBroadcastUDPSocket(float delta)
         sendPacket << int32_t(multiplayerVerficationNumber) << int32_t(serverVersion) << proxyName;
         broadcast_listen_socket.send(sendPacket, recvAddress, recvPort);
     }
-    if (boardcastServerDelay > 0.0)
+    if (boardcastServerDelay > 0.0f)
     {
         boardcastServerDelay -= delta;
     }else{
-        boardcastServerDelay = 5.0;
+        boardcastServerDelay = 5.0f;
 
         sp::io::DataBuffer sendPacket;
         sendPacket << int32_t(multiplayerVerficationNumber) << int32_t(serverVersion) << proxyName;

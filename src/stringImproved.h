@@ -451,7 +451,7 @@ public:
         {
             return {*this, ""};
         }
-        return {substr(0, index), substr(index + sep.length())};
+        return {substr(0, index), substr(index + static_cast<int>(sep.length()))};
     }
 
     /*
@@ -680,6 +680,11 @@ public:
     /* Convert this string to a number */
     float toFloat() const { return strtof(c_str(), nullptr); }
     int toInt(int bits_per_digit=10) const { return strtol(c_str(), nullptr, bits_per_digit); }
+    int64_t toInt64(int bits_per_digit=10) const { return strtoll(c_str(), nullptr, bits_per_digit); }
+    bool toBool() const {
+        if (lower() == "true" || lower() == "yes" || lower() == "ok") return true;
+        return toInt() != 0;
+    }
 };
 #undef _WHITESPACE
 

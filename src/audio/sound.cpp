@@ -3,6 +3,20 @@
 
 #include <cstring>
 
+#define STB_VORBIS_NO_STDIO
+#define STB_VORBIS_NO_PUSHDATA_API
+#define STB_VORBIS_HEADER_ONLY
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#pragma GCC diagnostic ignored "-Wshadow-compatible-local"
+#pragma GCC diagnostic ignored "-Wold-style-cast"
+#endif//__GNUC__
+#include "stb/stb_vorbis.h"
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif//__GNUC__
+
 namespace sp {
 namespace audio {
 
@@ -46,7 +60,7 @@ void SoundPlayback::onMixSamples(int16_t* stream, int sample_count)
                 }
             }
 
-            int sample = float(sound->samples[int(index)]) * volume;
+            auto sample = static_cast<int>(float(sound->samples[int(index)]) * volume);
             mix(stream[idx+0], sample);
             mix(stream[idx+1], sample);
 
@@ -69,8 +83,8 @@ void SoundPlayback::onMixSamples(int16_t* stream, int sample_count)
                 }
             }
 
-            int sample_left = float(sound->samples[int(index) * 2]) * volume;
-            int sample_right = float(sound->samples[int(index) * 2 + 1]) * volume;
+            auto sample_left = static_cast<int>(float(sound->samples[int(index) * 2]) * volume);
+            auto sample_right = static_cast<int>(float(sound->samples[int(index) * 2 + 1]) * volume);
             mix(stream[idx+0], sample_left);
             mix(stream[idx+1], sample_right);
 
@@ -84,6 +98,27 @@ Sound::Sound(const string& resource_name)
     auto stream = getResourceStream(resource_name);
     if (!stream)
         return;
+    
+    if (resource_name.endswith(".ogg"))
+    {
+        std::vector<uint8_t> data;
+        data.resize(stream->getSize());
+        stream->read(data.data(), data.size());
+        short* buffer = nullptr;
+        auto len = stb_vorbis_decode_memory(data.data(), static_cast<int>(data.size()), &channels, &samplerate, &buffer);
+        if (len >= 0 && channels > 0)
+        {
+            samples.resize(len * channels);
+            memcpy(samples.data(), buffer, sizeof(short) * samples.size());
+            free(buffer);
+        }
+        else
+        {
+            channels = 0;
+        }
+        return;
+    }
+    
     char chunk_id[4];
     uint32_t chunk_size;
 

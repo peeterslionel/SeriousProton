@@ -10,7 +10,7 @@
 #include "P.h"
 #include "stringImproved.h"
 #include "lua/lua.hpp"
-#include <SFML/Graphics/Color.hpp>
+#include "glm/gtc/type_precision.hpp"
 #include <typeinfo>
 #include <optional>
 
@@ -142,8 +142,8 @@ struct convert<T*>
 
 template<class T>
 struct convert<P<T>>
-//TODO: Possible addition, make sure T is a subclass of PObject
 {
+    static_assert(std::is_base_of_v<PObject, T>, "T must be a derived class of PObject.");
     static void param(lua_State* L, int& idx, P<T>& ptr)
     {
         if (!lua_istable(L, idx))
@@ -210,6 +210,7 @@ struct convert<P<T>>
 template<class T>
 struct convert<PVector<T>>
 {
+    static_assert(std::is_base_of_v<PObject, T>, "T must be a derived class of PObject.");
     static int returnType(lua_State* L, const PVector<T>& pvector)
     {
         return convert<std::vector<P<T>>>::returnType(L, pvector);
@@ -219,28 +220,9 @@ struct convert<PVector<T>>
 //Specialized template for const char* so we can convert lua strings to C strings. This overrules the general T* template for const char*
 template<> void convert<const char*>::param(lua_State* L, int& idx, const char*& str);
 template<> void convert<string>::param(lua_State* L, int& idx, string& str);
+template<> void convert<std::string_view>::param(lua_State* L, int& idx, std::string_view& str);
 
 template<> void convert<bool>::param(lua_State* L, int& idx, bool& b);
-
-template<> void convert<sf::Color>::param(lua_State* L, int& idx, sf::Color& color);
-
-/* Convert parameters to sf::Vector2 objects. */
-template<typename T>
-struct convert<sf::Vector2<T>>
-{
-    static void param(lua_State* L, int& idx, sf::Vector2<T>& v)
-    {
-        convert<T>::param(L, idx, v.x);
-        convert<T>::param(L, idx, v.y);
-    }
-    
-    static int returnType(lua_State* L, const sf::Vector2<T>& t)
-    {
-        auto result = convert<T>::returnType(L, t.x);
-        result += convert<T>::returnType(L, t.y);
-        return result;
-    }
-};
 
 template<typename T, glm::qualifier Q>
 struct convert<glm::vec<2, T, Q>>
@@ -267,7 +249,38 @@ struct convert<glm::vec<3, T, Q>>
         convert<T>::param(L, idx, v.y);
         convert<T>::param(L, idx, v.z);
     }
+
+    static int returnType(lua_State* L, const glm::vec<3, T, Q>& t)
+    {
+        auto result = convert<T>::returnType(L, t.x);
+        result += convert<T>::returnType(L, t.y);
+        result += convert<T>::returnType(L, t.z);
+        return result;
+    }
 };
+
+template<typename T, glm::qualifier Q>
+struct convert<glm::vec<4, T, Q>>
+{
+    static void param(lua_State* L, int& idx, glm::vec<4, T, Q>& v)
+    {
+        convert<T>::param(L, idx, v.x);
+        convert<T>::param(L, idx, v.y);
+        convert<T>::param(L, idx, v.z);
+        convert<T>::param(L, idx, v.w);
+    }
+
+    static int returnType(lua_State* L, const glm::vec<4, T, Q>& t)
+    {
+        auto result = convert<T>::returnType(L, t.x);
+        result += convert<T>::returnType(L, t.y);
+        result += convert<T>::returnType(L, t.z);
+        result += convert<T>::returnType(L, t.w);
+        return result;
+    }
+};
+
+template<> void convert<glm::u8vec4>::param(lua_State* L, int& idx, glm::u8vec4& color);
 
 /* Convert parameters to std::vector<?> objects. */
 template<typename T>

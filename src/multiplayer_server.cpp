@@ -1,9 +1,15 @@
 #include "multiplayer_server.h"
 #include "multiplayer_client.h"
 #include "multiplayer_internal.h"
+#include "multiplayer.h"
 #include "engine.h"
 
 #include "io/http/request.h"
+
+#ifdef STEAMSDK
+#include "io/network/steamP2PSocket.h"
+#endif
+
 
 #define MULTIPLAYER_COLLECT_DATA_STATS 0
 
@@ -15,29 +21,30 @@ static std::unordered_map<string, int> multiplayer_stats;
 #define ADD_MULTIPLAYER_STATS(name, bytes) do {} while(0)
 #endif
 
+
 P<GameServer> game_server;
 
 GameServer::GameServer(string server_name, int version_number, int listen_port)
 : server_name(server_name), listen_port(listen_port), version_number(version_number)
 {
-    assert(!game_server);
-    assert(!game_client);
+    SDL_assert(!game_server);
+    SDL_assert(!game_client);
     game_server = this;
     lastGameSpeed = engine->getGameSpeed();
-    sendDataRate = 0.0;
-    sendDataRatePerClient = 0.0;
-    boardcastServerDelay = 0.0;
+    sendDataRate = 0.0f;
+    sendDataRatePerClient = 0.0f;
+    boardcastServerDelay = 0.0f;
     keep_alive_send_timer.repeat(10);;
 
     nextObjectId = 1;
     nextclient_id = 1;
 
-    if (!listenSocket.listen(static_cast<uint16_t>(listen_port)))
+    if (!listen_socket.listen(static_cast<uint16_t>(listen_port)))
     {
         LOG(ERROR) << "Failed to listen on TCP port: " << listen_port;
         destroy();
     }
-    listenSocket.setBlocking(false);
+    listen_socket.setBlocking(false);
     new_socket = std::make_unique<sp::io::network::TcpSocket>();
     if (!broadcast_listen_socket.bind(static_cast<uint16_t>(listen_port)))
     {
@@ -48,6 +55,12 @@ GameServer::GameServer(string server_name, int version_number, int listen_port)
         LOG(Error, "Failed to join multicast group for local server discovery");
     }
     broadcast_listen_socket.setBlocking(false);
+#ifdef STEAMSDK
+    if (!listen_steam.listen())
+    {
+        LOG(Error, "Failed to listen for steam P2P connections");
+    }
+#endif
 #if MULTIPLAYER_COLLECT_DATA_STATS
     multiplayer_stats_dump.repeat(1.0f);
 #endif
@@ -71,9 +84,9 @@ void GameServer::connectToProxy(sp::io::network::Address address, int port)
     }
 
     ClientInfo info;
+    socket->setBlocking(false);
+    socket->setDelay(false);
     info.socket = std::move(socket);
-    info.socket->setBlocking(false);
-    info.socket->setDelay(false);
     info.client_id = nextclient_id;
     info.receive_state = CRS_Auth;
     nextclient_id++;
@@ -96,8 +109,11 @@ void GameServer::destroy()
     clientList.clear();
     objectMap.clear();
 
-    listenSocket.close();
+    listen_socket.close();
     broadcast_listen_socket.close();
+#ifdef STEAMSDK
+    listen_steam.close();
+#endif
 
     Updatable::destroy();
 }
@@ -155,7 +171,7 @@ void GameServer::update(float /*gameDelta*/)
             int cnt = 0;
             for(unsigned int n=0; n<obj->memberReplicationInfo.size(); n++)
             {
-                if (obj->memberReplicationInfo[n].update_timeout > 0.0)
+                if (obj->memberReplicationInfo[n].update_timeout > 0.0f)
                 {
                     obj->memberReplicationInfo[n].update_timeout -= delta;
                 }else{
@@ -193,24 +209,18 @@ void GameServer::update(float /*gameDelta*/)
 
     handleBroadcastUDPSocket(delta);
 
-    if (listenSocket.accept(*new_socket))
+    if (listen_socket.accept(*new_socket))
     {
         new_socket->setBlocking(false);
         new_socket->setDelay(false);
-        ClientInfo info;
-        info.socket = std::move(new_socket);
+        newClientConnection(std::move(new_socket));
         new_socket = std::make_unique<sp::io::network::TcpSocket>();
-        info.client_id = nextclient_id;
-        info.receive_state = CRS_Auth;
-        nextclient_id++;
-        {
-            sp::io::DataBuffer packet;
-            packet << CMD_REQUEST_AUTH << int32_t(version_number) << bool(server_password != "");
-            info.socket->queue(packet);
-        }
-        LOG(INFO) << "New connection: " << info.client_id << " waiting for authentication";
-        clientList.push_back(std::move(info));
     }
+#ifdef STEAMSDK
+    auto steam_socket = listen_steam.accept();
+    if (steam_socket)
+        newClientConnection(std::move(steam_socket));
+#endif
 
     for(unsigned int n=0; n<clientList.size(); n++)
     {
@@ -259,7 +269,7 @@ void GameServer::update(float /*gameDelta*/)
                         break;
                     case CMD_ALIVE_RESP:
                         {
-                            clientList[n].ping = clientList[n].round_trip_start_time.get() * 1000.0f;
+                            clientList[n].ping = static_cast<int32_t>(clientList[n].round_trip_start_time.get() * 1000.0f);
                         }
                         break;
                     default:
@@ -368,7 +378,7 @@ void GameServer::update(float /*gameDelta*/)
                         break;
                     case CMD_ALIVE_RESP:
                         {
-                            clientList[n].ping = clientList[n].round_trip_start_time.get() * 1000.0f;
+                            clientList[n].ping = static_cast<int32_t>(clientList[n].round_trip_start_time.get() * 1000.0f);
                         }
                     break;
                     default:
@@ -386,7 +396,7 @@ void GameServer::update(float /*gameDelta*/)
         if (clientList[n].socket != NULL) {
             clientList[n].socket->sendSendQueue();
         }
-        if (clientList[n].socket == NULL || !clientList[n].socket->isConnected())
+        if (clientList[n].socket == NULL || clientList[n].socket->getState() == sp::io::network::StreamSocket::State::Closed)
         {
             if (clientList[n].socket)
             {
@@ -500,17 +510,33 @@ void GameServer::handleBroadcastUDPSocket(float delta)
         sendPacket << int32_t(multiplayerVerficationNumber) << int32_t(version_number) << server_name;
         broadcast_listen_socket.send(sendPacket, recvAddress, recvPort);
     }
-    if (boardcastServerDelay > 0.0)
+    if (boardcastServerDelay > 0.0f)
     {
         boardcastServerDelay -= delta;
     }else{
-        boardcastServerDelay = 5.0;
+        boardcastServerDelay = 5.0f;
 
         sp::io::DataBuffer sendPacket;
         sendPacket << int32_t(multiplayerVerficationNumber) << int32_t(version_number) << server_name;
         broadcast_listen_socket.sendMulticast(sendPacket, 666, listen_port + 1);
         broadcast_listen_socket.sendBroadcast(sendPacket, listen_port + 1);
     }
+}
+
+void GameServer::newClientConnection(std::unique_ptr<sp::io::network::StreamSocket> socket)
+{
+    ClientInfo info;
+    info.socket = std::move(socket);
+    info.client_id = nextclient_id;
+    info.receive_state = CRS_Auth;
+    nextclient_id++;
+    {
+        sp::io::DataBuffer packet;
+        packet << CMD_REQUEST_AUTH << int32_t(version_number) << bool(server_password != "");
+        info.socket->queue(packet);
+    }
+    LOG(INFO) << "New connection: " << info.client_id << " waiting for authentication";
+    clientList.push_back(std::move(info));
 }
 
 void GameServer::registerObject(P<MultiplayerObject> obj)
@@ -580,6 +606,7 @@ void GameServer::sendAll(sp::io::DataBuffer& packet)
 
 void GameServer::registerOnMasterServer(string master_url)
 {
+    stopMasterServerRegistry();
     this->master_server_url = master_url;
     master_server_update_thread = std::move(std::thread(&GameServer::runMasterServerUpdateThread, this));
 }
@@ -593,6 +620,7 @@ void GameServer::stopMasterServerRegistry()
 
 void GameServer::runMasterServerUpdateThread()
 {
+    master_server_state = MasterServerState::Disabled;
     if (!master_server_url.startswith("http://"))
     {
         LOG(ERROR) << "Master server URL " << master_server_url << " does not start with \"http://\"";
@@ -607,7 +635,7 @@ void GameServer::runMasterServerUpdateThread()
     }
     int port = 80;
     int port_start = hostname.find(":");
-    string uri = hostname.substr(path_start + 1);
+    string uri = hostname.substr(path_start);
     if (port_start >= 0)
     {
         // If a port is attached to the hostname, parse it out.
@@ -620,6 +648,7 @@ void GameServer::runMasterServerUpdateThread()
     
     LOG(INFO) << "Registering at master server " << master_server_url;
     
+    master_server_state = MasterServerState::Registering;
     sp::io::http::Request http(hostname, port);
     while(!isDestroyed() && master_server_url != "")
     {
@@ -627,14 +656,20 @@ void GameServer::runMasterServerUpdateThread()
         if (response.status != 200)
         {
             LOG(WARNING) << "Failed to register at master server " << master_server_url << " (status " << response.status << ")";
+            master_server_state = MasterServerState::FailedToReachMasterServer;
         }else if (response.body != "OK")
         {
             LOG(WARNING) << "Master server " << master_server_url << " reports error on registering: " << response.body;
+            master_server_state = MasterServerState::FailedPortForwarding;
+        }else
+        {
+            master_server_state = MasterServerState::Success;
         }
         
         for(int n=0;n<60 && !isDestroyed() && master_server_url != "";n++)
             std::this_thread::sleep_for(std::chrono::duration<float>(1.f));
     }
+    master_server_state = MasterServerState::Disabled;
 }
 
 void GameServer::startAudio(int32_t client_id, int32_t target_identifier)
