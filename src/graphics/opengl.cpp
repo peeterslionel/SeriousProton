@@ -89,6 +89,8 @@ namespace {
 
     void APIENTRY debugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* /*user*/)
     {
+        if(131185 == id)
+            return;
         Logging entry(severityCast(severity), __FILE__, __LINE__, "", "[GL] ", sourceLabel(source), debugTypeLabel(type), string(id) + " ", message);
     }
 }
